@@ -8,6 +8,7 @@ use App\Models\SyncRun;
 use Illuminate\Support\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class SyncRunController extends Controller
 {
@@ -18,6 +19,12 @@ class SyncRunController extends Controller
             'source' => ['nullable', 'string', 'max:64'],
             'trigger' => ['nullable', 'string', 'max:32'],
             'started_at' => ['nullable', 'date'],
+        ]);
+
+        Log::info('Sync run start requested', [
+            'user_id' => $data['user_id'] ?? null,
+            'source' => $data['source'] ?? 'rossiya_edu',
+            'trigger' => $data['trigger'] ?? 'scheduler',
         ]);
 
         $syncRun = SyncRun::query()->create([
@@ -47,6 +54,15 @@ class SyncRunController extends Controller
 
         $stats = $data['stats'] ?? [];
 
+        Log::info('Sync run finish requested', [
+            'sync_run_id' => $syncRun->id,
+            'user_id' => $syncRun->user_id,
+            'current_status' => $syncRun->status,
+            'new_status' => $data['status'] ?? 'finished',
+            'has_error_text' => ! empty($data['error_text']),
+            'stats' => $stats,
+        ]);
+
         $syncRun->forceFill([
             'status' => $data['status'] ?? 'finished',
             'finished_at' => isset($data['finished_at'])
@@ -65,6 +81,13 @@ class SyncRunController extends Controller
         ])->save();
 
         $this->updateCredentialStatus($syncRun);
+
+        Log::info('Sync run finished', [
+            'sync_run_id' => $syncRun->id,
+            'user_id' => $syncRun->user_id,
+            'status' => $syncRun->status,
+            'finished_at' => optional($syncRun->finished_at)->toIso8601String(),
+        ]);
 
         return response()->json([
             'sync_run_id' => $syncRun->id,
@@ -101,6 +124,14 @@ class SyncRunController extends Controller
             'level' => ['nullable', 'string', 'max:16'],
             'message' => ['required', 'string'],
             'context' => ['nullable', 'array'],
+        ]);
+
+        Log::info('Sync run log requested', [
+            'sync_run_id' => $syncRun->id,
+            'user_id' => $syncRun->user_id,
+            'level' => $data['level'] ?? 'info',
+            'message' => $data['message'],
+            'context_keys' => array_keys($data['context'] ?? []),
         ]);
 
         $log = $syncRun->logs()->create([

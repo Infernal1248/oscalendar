@@ -8,6 +8,7 @@ use App\Models\RosterItem;
 use App\Models\SyncRun;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class SyncResultService
 {
@@ -24,6 +25,14 @@ class SyncResultService
                 'segments_created' => 0,
                 'segments_updated' => 0,
             ];
+
+            Log::info('Sync result transaction started', [
+                'sync_run_id' => $payload['sync_run_id'] ?? null,
+                'user_id' => $userId,
+                'source' => $source,
+                'items_found' => $stats['items_found'],
+                'segments_found' => $stats['segments_found'],
+            ]);
 
             $syncRun = $this->resolveSyncRun($payload, $stats);
             $rosterByExternalId = [];

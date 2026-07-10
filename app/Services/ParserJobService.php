@@ -7,6 +7,7 @@ use App\Models\SyncRun;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ParserJobService
 {
@@ -24,6 +25,12 @@ class ParserJobService
                 ?: $this->createAndClaimRun($source, $portal, $lockedBy, $lockSeconds, $now, $userId);
 
             if (! $syncRun) {
+                Log::info('Parser job service found no claimable user', [
+                    'source' => $source,
+                    'portal' => $portal,
+                    'user_id' => $userId,
+                ]);
+
                 return null;
             }
 
@@ -34,6 +41,12 @@ class ParserJobService
                 ->first();
 
             if (! $credential) {
+                Log::warning('Parser job failed: active credentials missing after claim', [
+                    'sync_run_id' => $syncRun->id,
+                    'user_id' => $syncRun->user_id,
+                    'portal' => $portal,
+                ]);
+
                 $syncRun->forceFill([
                     'status' => 'failed',
                     'finished_at' => $now,
@@ -92,6 +105,11 @@ class ParserJobService
         $syncRun = $query->lockForUpdate()->first();
 
         if (! $syncRun) {
+            Log::info('Parser job service found no queued or expired run', [
+                'source' => $source,
+                'user_id' => $userId,
+            ]);
+
             return null;
         }
 
@@ -133,6 +151,12 @@ class ParserJobService
         $credential = $credentialQuery->lockForUpdate()->first();
 
         if (! $credential) {
+            Log::info('Parser job service found no ready credentials', [
+                'source' => $source,
+                'portal' => $portal,
+                'user_id' => $userId,
+            ]);
+
             return null;
         }
 

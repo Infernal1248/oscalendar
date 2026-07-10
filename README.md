@@ -160,6 +160,30 @@ POST /api/internal/sync-runs/{sync_run_id}/log
 
 Sensitive context keys such as `password`, `token`, `authorization`, and `phones` are redacted before storage.
 
+Parser API diagnostics are written to the default Laravel log:
+
+```text
+storage/logs/laravel.log
+```
+
+Useful log messages:
+
+```text
+Internal API authenticated
+Parser job claim requested
+Parser job claimed
+Parser job claim returned no job
+Parser job heartbeat requested
+Sync result received
+Sync result stored
+Sync run finish requested
+Sync run log requested
+```
+
+The logs include ids, statuses, counts, lock owner, and context keys. They do not include decrypted portal passwords or full parser payloads.
+
+If a parser worker fails before sending `/sync-result`, it should call `/sync-runs/{id}/finish` with `status=failed`; otherwise the same user can be claimed again after `lock_expires_at`.
+
 ## Idempotency
 
 `roster_items` are matched by `user_id + source + source_external_id` when `source_external_id` exists. Otherwise the backend computes and uses `source_hash`.
