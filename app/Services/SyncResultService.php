@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\FlightSegment;
+use App\Models\PortalCredential;
 use App\Models\RosterItem;
 use App\Models\SyncRun;
 use Illuminate\Support\Carbon;
@@ -80,8 +81,19 @@ class SyncResultService
             $syncRun->forceFill(array_merge($stats, [
                 'status' => 'finished',
                 'finished_at' => now(),
+                'lock_expires_at' => null,
+                'locked_by' => null,
                 'stats' => $stats,
             ]))->save();
+
+            PortalCredential::query()
+                ->where('user_id', $userId)
+                ->where('portal', $source)
+                ->update([
+                    'last_success_at' => now(),
+                    'last_error_at' => null,
+                    'last_error_text' => null,
+                ]);
 
             return [
                 'sync_run_id' => $syncRun->id,

@@ -22,7 +22,79 @@ Accept: application/json
 
 ## Parser endpoints
 
-Main endpoint:
+All parser endpoints require the internal Bearer token.
+
+Recommended parser VM flow:
+
+1. Supervisor calls `POST /api/internal/parser-jobs/claim`.
+2. If `job` is not `null`, supervisor starts one isolated worker process for that job.
+3. Worker uses `job.login` and `job.password` to parse one user.
+4. Worker may call heartbeat while parsing.
+5. Worker sends parsed data to `POST /api/internal/sync-result`.
+6. On parser failure before a result exists, worker calls `POST /api/internal/sync-runs/{id}/finish` with `status=failed`.
+
+Claim one user job:
+
+```http
+POST /api/internal/parser-jobs/claim
+```
+
+Request:
+
+```json
+{
+  "source": "rossiya_edu",
+  "portal": "rossiya_edu",
+  "locked_by": "parser-vm-1:supervisor",
+  "lock_seconds": 900,
+  "user_id": null
+}
+```
+
+Response when a job exists:
+
+```json
+{
+  "ok": true,
+  "job": {
+    "sync_run_id": 123,
+    "user_id": 1,
+    "source": "rossiya_edu",
+    "portal": "rossiya_edu",
+    "login": "portal-login",
+    "password": "decrypted-password",
+    "attempt": 1,
+    "locked_by": "parser-vm-1:supervisor",
+    "lock_expires_at": "2026-07-10T12:15:00+00:00"
+  }
+}
+```
+
+Response when no users are ready:
+
+```json
+{
+  "ok": true,
+  "job": null
+}
+```
+
+Extend a running job lock:
+
+```http
+POST /api/internal/parser-jobs/{sync_run_id}/heartbeat
+```
+
+Request:
+
+```json
+{
+  "locked_by": "parser-vm-1:worker-42",
+  "lock_seconds": 900
+}
+```
+
+Main result endpoint:
 
 ```http
 POST /api/internal/sync-result
@@ -50,6 +122,43 @@ POST /api/internal/sync-runs/{id}/finish
 ```
 
 If the parser starts a run explicitly, pass the returned `sync_run_id` into `/api/internal/sync-result`.
+
+For the job API, `sync_run_id` comes from `/parser-jobs/claim`; pass it into `/sync-result`.
+
+Finish a failed job without parsed data:
+
+```http
+POST /api/internal/sync-runs/{sync_run_id}/finish
+```
+
+```json
+{
+  "status": "failed",
+  "error_text": "Portal login failed",
+  "stats": {
+    "items_found": 0,
+    "segments_found": 0
+  }
+}
+```
+
+Append parser log entry:
+
+```http
+POST /api/internal/sync-runs/{sync_run_id}/log
+```
+
+```json
+{
+  "level": "error",
+  "message": "Portal login failed",
+  "context": {
+    "step": "login"
+  }
+}
+```
+
+Sensitive context keys such as `password`, `token`, `authorization`, and `phones` are redacted before storage.
 
 ## Idempotency
 

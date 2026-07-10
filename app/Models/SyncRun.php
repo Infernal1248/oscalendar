@@ -14,6 +14,11 @@ class SyncRun extends Model
         'trigger',
         'status',
         'started_at',
+        'claimed_at',
+        'lock_expires_at',
+        'locked_by',
+        'attempt',
+        'heartbeat_at',
         'finished_at',
         'items_found',
         'items_created',
@@ -27,6 +32,10 @@ class SyncRun extends Model
 
     protected $casts = [
         'started_at' => 'datetime',
+        'claimed_at' => 'datetime',
+        'lock_expires_at' => 'datetime',
+        'attempt' => 'integer',
+        'heartbeat_at' => 'datetime',
         'finished_at' => 'datetime',
         'items_found' => 'integer',
         'items_created' => 'integer',

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Internal;
 
 use App\Http\Controllers\Controller;
+use App\Models\PortalCredential;
 use App\Models\SyncRun;
 use Illuminate\Support\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -51,6 +52,8 @@ class SyncRunController extends Controller
             'finished_at' => isset($data['finished_at'])
                 ? Carbon::parse($data['finished_at'])->utc()->toDateTimeString()
                 : now(),
+            'lock_expires_at' => null,
+            'locked_by' => null,
             'error_text' => $data['error_text'] ?? null,
             'stats' => $stats,
             'items_found' => $stats['items_found'] ?? $syncRun->items_found,
@@ -61,10 +64,35 @@ class SyncRunController extends Controller
             'segments_updated' => $stats['segments_updated'] ?? $syncRun->segments_updated,
         ])->save();
 
+        $this->updateCredentialStatus($syncRun);
+
         return response()->json([
             'sync_run_id' => $syncRun->id,
             'status' => $syncRun->status,
         ]);
+    }
+
+    private function updateCredentialStatus(SyncRun $syncRun): void
+    {
+        if (! $syncRun->user_id) {
+            return;
+        }
+
+        $attributes = $syncRun->status === 'finished'
+            ? [
+                'last_success_at' => $syncRun->finished_at ?: now(),
+                'last_error_at' => null,
+                'last_error_text' => null,
+            ]
+            : [
+                'last_error_at' => $syncRun->finished_at ?: now(),
+                'last_error_text' => $syncRun->error_text,
+            ];
+
+        PortalCredential::query()
+            ->where('user_id', $syncRun->user_id)
+            ->where('portal', $syncRun->source)
+            ->update($attributes);
     }
 
     public function log(Request $request, SyncRun $syncRun): JsonResponse
