@@ -50,17 +50,31 @@ class TelegramBotClient
 
     private function request(string $method, array $payload): void
     {
-        $response = Http::asJson()->post($this->baseUrl.'/'.$method, $payload);
+        try {
+            $response = Http::asJson()
+                ->post($this->baseUrl.'/'.$method, $payload);
+        } catch (\Throwable $exception) {
+            Log::error('Telegram API request failed', [
+                'method' => $method,
+                'chat_id' => $payload['chat_id'] ?? null,
+                'exception' => get_class($exception),
+                'message' => $exception->getMessage(),
+            ]);
+
+            return;
+        }
+
         $data = $response->json() ?: [];
 
         if (! $response->successful() || ($data['ok'] ?? false) !== true) {
             Log::error('Telegram API request failed', [
                 'method' => $method,
+                'chat_id' => $payload['chat_id'] ?? null,
                 'status' => $response->status(),
                 'response' => $response->body(),
             ]);
 
-            throw new RuntimeException('Telegram API request failed.');
+            return;
         }
 
         Log::info('Telegram API request sent', [
