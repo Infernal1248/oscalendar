@@ -3,14 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Services\Telegram\TelegramBotService;
-use App\Services\Telegram\TelegramBotClient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class TelegramWebhookController extends Controller
 {
-    public function __invoke(Request $request, TelegramBotService $bot, TelegramBotClient $client): JsonResponse
+    public function __invoke(Request $request, TelegramBotService $bot): JsonResponse
     {
         $this->validateBridgeRequest($request);
 
@@ -40,19 +39,12 @@ class TelegramWebhookController extends Controller
             throw $exception;
         }
 
-        $actions = $client->pullActions();
-
         Log::info('Telegram bridge update processed', [
             'update_id' => $update['update_id'] ?? null,
-            'actions_count' => count($actions),
-            'actions' => array_map(function ($action) {
-                return $action['method'] ?? 'unknown';
-            }, $actions),
         ]);
 
         return response()->json([
             'ok' => true,
-            'actions' => $actions,
         ]);
     }
 

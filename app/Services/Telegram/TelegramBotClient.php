@@ -2,9 +2,24 @@
 
 namespace App\Services\Telegram;
 
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use RuntimeException;
+
 class TelegramBotClient
 {
-    private $actions = [];
+    private $baseUrl;
+
+    public function __construct()
+    {
+        $token = config('services.telegram_bot.token');
+
+        if (! $token) {
+            throw new RuntimeException('TELEGRAM_BOT_TOKEN is not configured.');
+        }
+
+        $this->baseUrl = 'https://api.telegram.org/bot'.$token;
+    }
 
     public function sendMessage(int $chatId, string $text, array $options = []): void
     {
@@ -18,7 +33,7 @@ class TelegramBotClient
                 return $value !== null;
             });
 
-            $this->queueAction('sendMessage', $payload);
+            $this->request('sendMessage', $payload);
         }
     }
 
@@ -30,23 +45,28 @@ class TelegramBotClient
             $payload['text'] = $text;
         }
 
-        $this->queueAction('answerCallbackQuery', $payload);
+        $this->request('answerCallbackQuery', $payload);
     }
 
-    public function pullActions(): array
+    private function request(string $method, array $payload): void
     {
-        $actions = $this->actions;
-        $this->actions = [];
+        $response = Http::asJson()->post($this->baseUrl.'/'.$method, $payload);
+        $data = $response->json() ?: [];
 
-        return $actions;
-    }
+        if (! $response->successful() || ($data['ok'] ?? false) !== true) {
+            Log::error('Telegram API request failed', [
+                'method' => $method,
+                'status' => $response->status(),
+                'response' => $response->body(),
+            ]);
 
-    private function queueAction(string $method, array $payload): void
-    {
-        $this->actions[] = [
+            throw new RuntimeException('Telegram API request failed.');
+        }
+
+        Log::info('Telegram API request sent', [
             'method' => $method,
-            'payload' => $payload,
-        ];
+            'chat_id' => $payload['chat_id'] ?? null,
+        ]);
     }
 
     private function splitText(string $text): array

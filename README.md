@@ -75,13 +75,14 @@ POST /api/telegram/webhook
 
 ## Telegram bot
 
-The bot works through the VPS Telegram bridge. Laravel never stores the Telegram bot token and never calls Telegram API directly.
+The VPS bridge delivers incoming Telegram updates to Laravel. Laravel sends replies to Telegram API directly, using the bot token from `.env`.
 
 Configure Laravel:
 
 ```env
 TELEGRAM_BRIDGE_NAME=oscalendar_bot
 TELEGRAM_BRIDGE_SECRET=
+TELEGRAM_BOT_TOKEN=123456:telegram-token
 APP_URL=https://oscalendar.ru
 ```
 
@@ -110,25 +111,7 @@ X-TG-Bridge: vds-poller
 X-TG-Bot: oscalendar_bot
 ```
 
-Laravel responds with actions for the bridge to execute through Telegram API:
-
-```json
-{
-  "ok": true,
-  "actions": [
-    {
-      "method": "sendMessage",
-      "payload": {
-        "chat_id": 123456789,
-        "text": "Text",
-        "parse_mode": "HTML"
-      }
-    }
-  ]
-}
-```
-
-So the VPS bridge must parse `actions` from Laravel's response and execute each returned Telegram method with the token stored on the VPS.
+Laravel processes the update, sends the reply through Telegram API, and returns `{"ok": true}` to the bridge.
 
 Bot diagnostics are written to the default Laravel log:
 
@@ -136,7 +119,7 @@ Bot diagnostics are written to the default Laravel log:
 storage/logs/laravel.log
 ```
 
-The log includes update ids, chat ids, Telegram user ids, commands, bridge header rejections, exceptions, and generated action counts. Message text is not logged because onboarding may contain portal credentials.
+The log includes update ids, chat ids, Telegram user ids, commands, bridge header rejections, exceptions, and outgoing Telegram API calls. Message text is not logged because onboarding may contain portal credentials.
 
 Create the first admin from console:
 

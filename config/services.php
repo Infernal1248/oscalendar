@@ -35,4 +35,8 @@ return [
         'secret' => env('TELEGRAM_BRIDGE_SECRET'),
     ],
 
+    'telegram_bot' => [
+        'token' => env('TELEGRAM_BOT_TOKEN'),
+    ],
+
 ];
