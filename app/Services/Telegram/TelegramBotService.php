@@ -10,6 +10,7 @@ use App\Models\TelegramAccount;
 use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class TelegramBotService
@@ -29,11 +30,21 @@ class TelegramBotService
     public function handle(array $update): void
     {
         if (isset($update['callback_query'])) {
+            Log::info('Telegram bot handling callback', [
+                'telegram_id' => $update['callback_query']['from']['id'] ?? null,
+                'chat_id' => $update['callback_query']['message']['chat']['id'] ?? null,
+                'callback_data' => $update['callback_query']['data'] ?? null,
+            ]);
+
             $this->handleCallback($update['callback_query']);
             return;
         }
 
         if (! isset($update['message'])) {
+            Log::info('Telegram bot ignored update without message or callback', [
+                'update_keys' => array_keys($update),
+            ]);
+
             return;
         }
 
@@ -43,6 +54,11 @@ class TelegramBotService
         $text = trim((string) ($message['text'] ?? ''));
 
         if ($chatId === 0 || empty($from['id'])) {
+            Log::warning('Telegram bot ignored message without chat or sender', [
+                'chat_id' => $chatId ?: null,
+                'has_from_id' => ! empty($from['id']),
+            ]);
+
             return;
         }
 
@@ -50,11 +66,25 @@ class TelegramBotService
         $this->syncTelegramProfile($account, $from);
 
         if ($text === '/start') {
+            Log::info('Telegram bot command received', [
+                'command' => '/start',
+                'chat_id' => $chatId,
+                'telegram_id' => $from['id'],
+                'user_id' => $account->user_id,
+            ]);
+
             $this->handleStart($chatId, $account);
             return;
         }
 
         if ($text === '/help') {
+            Log::info('Telegram bot command received', [
+                'command' => '/help',
+                'chat_id' => $chatId,
+                'telegram_id' => $from['id'],
+                'user_id' => $account->user_id,
+            ]);
+
             $this->sendHelp($chatId, $account);
             return;
         }
@@ -68,6 +98,12 @@ class TelegramBotService
         }
 
         if (! $this->isActiveUser($account)) {
+            Log::info('Telegram bot user is pending approval', [
+                'chat_id' => $chatId,
+                'telegram_id' => $account->telegram_id,
+                'user_id' => $account->user_id,
+            ]);
+
             $this->sendPendingMessage($chatId, $account);
             return;
         }
@@ -78,18 +114,33 @@ class TelegramBotService
     private function handleStart(int $chatId, TelegramAccount $account): void
     {
         if (! $account->user->display_name) {
+            Log::info('Telegram onboarding asks display name', [
+                'telegram_id' => $account->telegram_id,
+                'user_id' => $account->user_id,
+            ]);
+
             $this->setConversation($account, self::STATE_DISPLAY_NAME);
             $this->client->sendMessage($chatId, "Добро пожаловать в oscalendar.\n\nКак к вам обращаться?");
             return;
         }
 
         if (! $this->hasPortalCredentials($account->user)) {
+            Log::info('Telegram onboarding asks portal login', [
+                'telegram_id' => $account->telegram_id,
+                'user_id' => $account->user_id,
+            ]);
+
             $this->setConversation($account, self::STATE_PORTAL_LOGIN);
             $this->client->sendMessage($chatId, "Отлично, {$this->e($account->user->display_name)}.\n\nВведите логин от личного кабинета.");
             return;
         }
 
         if (! $this->isActiveUser($account)) {
+            Log::info('Telegram start from pending user', [
+                'telegram_id' => $account->telegram_id,
+                'user_id' => $account->user_id,
+            ]);
+
             $this->sendPendingMessage($chatId, $account);
             return;
         }
@@ -106,6 +157,12 @@ class TelegramBotService
         if (! $conversation) {
             return false;
         }
+
+        Log::info('Telegram bot handling conversation state', [
+            'state' => $conversation->state,
+            'telegram_id' => $account->telegram_id,
+            'user_id' => $account->user_id,
+        ]);
 
         if ($text === '') {
             $this->client->sendMessage($chatId, 'Пожалуйста, отправьте текстовое значение.');

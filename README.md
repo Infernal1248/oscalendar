@@ -130,6 +130,14 @@ Laravel responds with actions for the bridge to execute through Telegram API:
 
 So the VPS bridge must parse `actions` from Laravel's response and execute each returned Telegram method with the token stored on the VPS.
 
+Bot diagnostics are written to the default Laravel log:
+
+```text
+storage/logs/laravel.log
+```
+
+The log includes update ids, chat ids, Telegram user ids, commands, bridge header rejections, exceptions, and generated action counts. Message text is not logged because onboarding may contain portal credentials.
+
 Create the first admin from console:
 
 ```bash
