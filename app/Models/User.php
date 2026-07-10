@@ -2,9 +2,9 @@
 
 namespace App\Models;
 
-use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
@@ -18,9 +18,9 @@ class User extends Authenticatable
      * @var array<int, string>
      */
     protected $fillable = [
-        'name',
-        'email',
-        'password',
+        'display_name',
+        'timezone',
+        'status',
     ];
 
     /**
@@ -29,8 +29,6 @@ class User extends Authenticatable
      * @var array<int, string>
      */
     protected $hidden = [
-        'password',
-        'remember_token',
     ];
 
     /**
@@ -39,6 +37,35 @@ class User extends Authenticatable
      * @var array<string, string>
      */
     protected $casts = [
-        'email_verified_at' => 'datetime',
     ];
+
+    public function telegramAccounts(): HasMany
+    {
+        return $this->hasMany(TelegramAccount::class);
+    }
+
+    public function portalCredentials(): HasMany
+    {
+        return $this->hasMany(PortalCredential::class);
+    }
+
+    public function rosterItems(): HasMany
+    {
+        return $this->hasMany(RosterItem::class);
+    }
+
+    public function flightSegments(): HasMany
+    {
+        return $this->hasMany(FlightSegment::class);
+    }
+
+    public function calendarFeeds(): HasMany
+    {
+        return $this->hasMany(CalendarFeed::class);
+    }
+
+    public function syncRuns(): HasMany
+    {
+        return $this->hasMany(SyncRun::class);
+    }
 }

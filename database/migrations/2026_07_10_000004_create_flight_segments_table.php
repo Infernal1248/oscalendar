@@ -41,6 +41,11 @@ class CreateFlightSegmentsTable extends Migration
                 ['user_id', 'source_para_id', 'flight_number', 'starts_at'],
                 'flight_segments_identity_idx'
             );
+            $table->unique(
+                ['user_id', 'source', 'source_para_id', 'flight_number', 'starts_at'],
+                'flight_segments_user_source_identity_unique'
+            );
+            $table->unique(['user_id', 'source', 'source_hash'], 'flight_segments_user_source_hash_unique');
             $table->index(['user_id', 'next_update_at'], 'flight_segments_user_next_update_idx');
             $table->index('source_hash', 'flight_segments_source_hash_idx');
         });

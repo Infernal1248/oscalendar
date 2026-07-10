@@ -30,6 +30,8 @@ class CreateRosterItemsTable extends Migration
 
             $table->index(['user_id', 'starts_at'], 'roster_items_user_starts_idx');
             $table->index(['user_id', 'source_external_id'], 'roster_items_user_external_idx');
+            $table->unique(['user_id', 'source', 'source_external_id'], 'roster_items_user_source_external_unique');
+            $table->unique(['user_id', 'source', 'source_hash'], 'roster_items_user_source_hash_unique');
             $table->index(['user_id', 'is_actual', 'starts_at'], 'roster_items_user_actual_starts_idx');
             $table->index('source_hash', 'roster_items_source_hash_idx');
         });

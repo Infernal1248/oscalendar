@@ -30,4 +30,9 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    'telegram_bridge' => [
+        'name' => env('TELEGRAM_BRIDGE_NAME'),
+        'secret' => env('TELEGRAM_BRIDGE_SECRET'),
+    ],
+
 ];

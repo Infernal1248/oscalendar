@@ -11,6 +11,7 @@ class CreateSyncRunsTable extends Migration
         Schema::create('sync_runs', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->nullable()->constrained('users')->nullOnDelete();
+            $table->string('source', 64)->default('rossiya_edu');
             $table->string('trigger', 32)->default('scheduler');
             $table->string('status', 32)->default('running');
             $table->dateTime('started_at');

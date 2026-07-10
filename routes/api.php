@@ -1,5 +1,9 @@
 <?php
 
+use App\Http\Controllers\CalendarFeedController;
+use App\Http\Controllers\Internal\SyncResultController;
+use App\Http\Controllers\Internal\SyncRunController;
+use App\Http\Controllers\TelegramWebhookController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -17,3 +21,15 @@ use Illuminate\Support\Facades\Route;
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
+
+Route::prefix('internal')
+    ->middleware('internal.api')
+    ->group(function () {
+        Route::post('/sync-runs/start', [SyncRunController::class, 'start']);
+        Route::post('/sync-runs/{syncRun}/finish', [SyncRunController::class, 'finish']);
+        Route::post('/sync-runs/{syncRun}/log', [SyncRunController::class, 'log']);
+        Route::post('/sync-result', [SyncResultController::class, 'store']);
+    });
+
+Route::post('/telegram/webhook', TelegramWebhookController::class);
+Route::get('/calendar/{token}.ics', [CalendarFeedController::class, 'show']);
