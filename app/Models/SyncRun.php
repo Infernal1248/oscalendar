@@ -19,6 +19,8 @@ class SyncRun extends Model
         'locked_by',
         'attempt',
         'heartbeat_at',
+        'last_chunk_at',
+        'last_chunk_kind',
         'finished_at',
         'items_found',
         'items_created',
@@ -36,6 +38,7 @@ class SyncRun extends Model
         'lock_expires_at' => 'datetime',
         'attempt' => 'integer',
         'heartbeat_at' => 'datetime',
+        'last_chunk_at' => 'datetime',
         'finished_at' => 'datetime',
         'items_found' => 'integer',
         'items_created' => 'integer',
@@ -54,5 +57,10 @@ class SyncRun extends Model
     public function logs(): HasMany
     {
         return $this->hasMany(SyncLog::class);
+    }
+
+    public function partialChunks(): HasMany
+    {
+        return $this->hasMany(SyncRunPartialChunk::class);
     }
 }

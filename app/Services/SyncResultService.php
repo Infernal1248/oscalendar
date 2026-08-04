@@ -6,6 +6,8 @@ use App\Models\FlightSegment;
 use App\Models\PortalCredential;
 use App\Models\RosterItem;
 use App\Models\SyncRun;
+use App\Models\SyncRunPartialChunk;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -17,75 +19,17 @@ class SyncResultService
         return DB::transaction(function () use ($payload) {
             $source = $payload['source'];
             $userId = (int) $payload['user_id'];
-            $stats = [
-                'items_found' => count($payload['roster_items'] ?? []),
-                'items_created' => 0,
-                'items_updated' => 0,
-                'segments_found' => count($payload['flight_segments'] ?? []),
-                'segments_created' => 0,
-                'segments_updated' => 0,
-            ];
 
             Log::info('Sync result transaction started', [
                 'sync_run_id' => $payload['sync_run_id'] ?? null,
                 'user_id' => $userId,
                 'source' => $source,
-                'items_found' => $stats['items_found'],
-                'segments_found' => $stats['segments_found'],
+                'items_found' => count($payload['roster_items'] ?? []),
+                'segments_found' => count($payload['flight_segments'] ?? []),
             ]);
 
+            $stats = $this->persistPayload($payload);
             $syncRun = $this->resolveSyncRun($payload, $stats);
-            $rosterByExternalId = [];
-
-            foreach ($payload['roster_items'] ?? [] as $itemPayload) {
-                $itemPayload['source_hash'] = $this->rosterHash($userId, $source, $itemPayload);
-                $identity = $this->rosterIdentity($userId, $source, $itemPayload);
-
-                $item = RosterItem::query()->firstOrNew($identity);
-                $created = ! $item->exists;
-                $item->fill($this->rosterAttributes($userId, $source, $itemPayload));
-                $item->save();
-
-                $stats[$created ? 'items_created' : 'items_updated']++;
-
-                if (! empty($item->source_external_id)) {
-                    $rosterByExternalId[$item->source_external_id] = $item;
-                }
-            }
-
-            foreach ($payload['flight_segments'] ?? [] as $segmentPayload) {
-                $segmentPayload['source_hash'] = $this->segmentHash($userId, $source, $segmentPayload);
-                $identity = $this->segmentIdentity($userId, $source, $segmentPayload);
-
-                $segment = FlightSegment::query()->firstOrNew($identity);
-                $created = ! $segment->exists;
-                $segment->fill($this->segmentAttributes($userId, $source, $segmentPayload, $rosterByExternalId));
-                $segment->save();
-
-                $segment->crewMembers()->delete();
-                foreach ($segmentPayload['crew'] ?? [] as $crewPayload) {
-                    $segment->crewMembers()->create([
-                        'role' => $crewPayload['role'] ?? null,
-                        'full_name' => $crewPayload['full_name'],
-                        'phones' => $crewPayload['phones'] ?? [],
-                    ]);
-                }
-
-                $segment->deferredItems()->delete();
-                foreach ($segmentPayload['deferred_items'] ?? [] as $deferredPayload) {
-                    $segment->deferredItems()->create([
-                        'group_name' => $deferredPayload['group_name'] ?? null,
-                        'title' => $deferredPayload['title'] ?? null,
-                        'ata' => $deferredPayload['ata'] ?? null,
-                        'work_order' => $deferredPayload['work_order'] ?? null,
-                        'due_at' => $this->dateTime($deferredPayload['due_at'] ?? null),
-                        'is_warning' => (bool) ($deferredPayload['is_warning'] ?? false),
-                        'raw_data' => $deferredPayload['raw_data'] ?? [],
-                    ]);
-                }
-
-                $stats[$created ? 'segments_created' : 'segments_updated']++;
-            }
 
             $syncRun->forceFill(array_merge($stats, [
                 'status' => 'finished',
@@ -110,6 +54,167 @@ class SyncResultService
                 'stats' => $stats,
             ];
         });
+    }
+
+    public function storePartial(SyncRun $syncRun, array $payload): array
+    {
+        return DB::transaction(function () use ($syncRun, $payload) {
+            $syncRun = SyncRun::query()->lockForUpdate()->findOrFail($syncRun->id);
+            $chunkHash = $this->chunkHash($payload);
+
+            $existingChunk = SyncRunPartialChunk::query()
+                ->where('sync_run_id', $syncRun->id)
+                ->where('chunk_hash', $chunkHash)
+                ->first();
+
+            if ($existingChunk) {
+                return $this->partialResponse($syncRun, $payload['chunk_kind'], true);
+            }
+
+            if (! in_array($syncRun->status, ['queued', 'running'], true)) {
+                throw new ConflictHttpException('The sync run is already closed.');
+            }
+
+            $chunkStats = $this->persistPayload($payload);
+
+            SyncRunPartialChunk::query()->create([
+                'sync_run_id' => $syncRun->id,
+                'chunk_hash' => $chunkHash,
+                'chunk_kind' => $payload['chunk_kind'],
+                'items_found' => $chunkStats['items_found'],
+                'segments_found' => $chunkStats['segments_found'],
+            ]);
+
+            $stats = [
+                'items_found' => $syncRun->items_found + $chunkStats['items_found'],
+                'items_created' => $syncRun->items_created + $chunkStats['items_created'],
+                'items_updated' => $syncRun->items_updated + $chunkStats['items_updated'],
+                'segments_found' => $syncRun->segments_found + $chunkStats['segments_found'],
+                'segments_created' => $syncRun->segments_created + $chunkStats['segments_created'],
+                'segments_updated' => $syncRun->segments_updated + $chunkStats['segments_updated'],
+            ];
+
+            $syncRun->forceFill(array_merge($stats, [
+                'status' => 'running',
+                'last_chunk_at' => now(),
+                'last_chunk_kind' => $payload['chunk_kind'],
+                'stats' => array_merge($syncRun->stats ?? [], $stats),
+            ]))->save();
+
+            return $this->partialResponse($syncRun, $payload['chunk_kind'], false);
+        });
+    }
+
+    private function persistPayload(array $payload): array
+    {
+        $source = $payload['source'];
+        $userId = (int) $payload['user_id'];
+        $stats = [
+            'items_found' => count($payload['roster_items'] ?? []),
+            'items_created' => 0,
+            'items_updated' => 0,
+            'segments_found' => count($payload['flight_segments'] ?? []),
+            'segments_created' => 0,
+            'segments_updated' => 0,
+        ];
+        $rosterByExternalId = [];
+
+        foreach ($payload['roster_items'] ?? [] as $itemPayload) {
+            $itemPayload['source_hash'] = empty($itemPayload['source_external_id'])
+                ? $this->rosterHash($userId, $source, $itemPayload)
+                : null;
+            $identity = $this->rosterIdentity($userId, $source, $itemPayload);
+
+            $item = RosterItem::query()->firstOrNew($identity);
+            $created = ! $item->exists;
+            $item->fill($this->rosterAttributes($userId, $source, $itemPayload));
+            $item->save();
+
+            $stats[$created ? 'items_created' : 'items_updated']++;
+
+            if (! empty($item->source_external_id)) {
+                $rosterByExternalId[$item->source_external_id] = $item;
+            }
+        }
+
+        foreach ($payload['flight_segments'] ?? [] as $segmentPayload) {
+            if (empty($segmentPayload['roster_source_external_id']) && ! empty($payload['roster_source_external_id'])) {
+                $segmentPayload['roster_source_external_id'] = $payload['roster_source_external_id'];
+            }
+
+            $hasIdentity = ! empty($segmentPayload['source_para_id'])
+                && ! empty($segmentPayload['flight_number'])
+                && ! empty($segmentPayload['starts_at']);
+            $segmentPayload['source_hash'] = $hasIdentity
+                ? null
+                : $this->segmentHash($userId, $source, $segmentPayload);
+            $identity = $this->segmentIdentity($userId, $source, $segmentPayload);
+
+            $segment = FlightSegment::query()->firstOrNew($identity);
+            $created = ! $segment->exists;
+            $segment->fill($this->segmentAttributes($userId, $source, $segmentPayload, $rosterByExternalId));
+            $segment->save();
+
+            $segment->crewMembers()->delete();
+            foreach ($segmentPayload['crew'] ?? [] as $crewPayload) {
+                $segment->crewMembers()->create([
+                    'role' => $crewPayload['role'] ?? null,
+                    'full_name' => $crewPayload['full_name'],
+                    'phones' => $crewPayload['phones'] ?? [],
+                ]);
+            }
+
+            $segment->deferredItems()->delete();
+            foreach ($segmentPayload['deferred_items'] ?? [] as $deferredPayload) {
+                $segment->deferredItems()->create([
+                    'group_name' => $deferredPayload['group_name'] ?? null,
+                    'title' => $deferredPayload['title'] ?? null,
+                    'ata' => $deferredPayload['ata'] ?? null,
+                    'work_order' => $deferredPayload['work_order'] ?? null,
+                    'due_at' => $this->dateTime($deferredPayload['due_at'] ?? null),
+                    'is_warning' => (bool) ($deferredPayload['is_warning'] ?? false),
+                    'raw_data' => $deferredPayload['raw_data'] ?? [],
+                ]);
+            }
+
+            $stats[$created ? 'segments_created' : 'segments_updated']++;
+        }
+
+        return $stats;
+    }
+
+    private function partialResponse(SyncRun $syncRun, string $chunkKind, bool $duplicate): array
+    {
+        return [
+            'ok' => true,
+            'sync_run_id' => $syncRun->id,
+            'chunk_kind' => $chunkKind,
+            'stats' => [
+                'items_found' => $syncRun->items_found,
+                'segments_found' => $syncRun->segments_found,
+            ],
+            'duplicate' => $duplicate,
+        ];
+    }
+
+    private function chunkHash(array $payload): string
+    {
+        return $this->hash($this->canonicalize($payload));
+    }
+
+    private function canonicalize(array $value): array
+    {
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        foreach ($value as $key => $item) {
+            if (is_array($item)) {
+                $value[$key] = $this->canonicalize($item);
+            }
+        }
+
+        return $value;
     }
 
     private function resolveSyncRun(array $payload, array $stats): SyncRun

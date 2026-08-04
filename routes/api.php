@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\CalendarFeedController;
 use App\Http\Controllers\Internal\ParserJobController;
+use App\Http\Controllers\Internal\PartialSyncResultController;
 use App\Http\Controllers\Internal\SyncResultController;
 use App\Http\Controllers\Internal\SyncRunController;
 use App\Http\Controllers\TelegramWebhookController;
@@ -29,6 +30,7 @@ Route::prefix('internal')
         Route::post('/sync-runs/start', [SyncRunController::class, 'start']);
         Route::post('/sync-runs/{syncRun}/finish', [SyncRunController::class, 'finish']);
         Route::post('/sync-runs/{syncRun}/log', [SyncRunController::class, 'log']);
+        Route::post('/sync-runs/{syncRun}/partial-result', [PartialSyncResultController::class, 'store']);
         Route::post('/parser-jobs/claim', [ParserJobController::class, 'claim']);
         Route::post('/parser-jobs/{syncRun}/heartbeat', [ParserJobController::class, 'heartbeat']);
         Route::post('/sync-result', [SyncResultController::class, 'store']);

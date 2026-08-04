@@ -9,6 +9,9 @@ use Illuminate\Support\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 class SyncRunController extends Controller
 {
@@ -46,9 +49,15 @@ class SyncRunController extends Controller
     public function finish(Request $request, SyncRun $syncRun): JsonResponse
     {
         $data = $request->validate([
-            'status' => ['nullable', 'string', 'max:32'],
-            'error_text' => ['nullable', 'string'],
+            'status' => ['required', 'string', Rule::in(['finished', 'failed'])],
+            'error_text' => ['nullable', 'required_if:status,failed', 'string'],
             'stats' => ['nullable', 'array'],
+            'stats.items_found' => ['nullable', 'integer', 'min:0'],
+            'stats.items_created' => ['nullable', 'integer', 'min:0'],
+            'stats.items_updated' => ['nullable', 'integer', 'min:0'],
+            'stats.segments_found' => ['nullable', 'integer', 'min:0'],
+            'stats.segments_created' => ['nullable', 'integer', 'min:0'],
+            'stats.segments_updated' => ['nullable', 'integer', 'min:0'],
             'finished_at' => ['nullable', 'date'],
         ]);
 
@@ -63,24 +72,42 @@ class SyncRunController extends Controller
             'stats' => $stats,
         ]);
 
-        $syncRun->forceFill([
-            'status' => $data['status'] ?? 'finished',
-            'finished_at' => isset($data['finished_at'])
-                ? Carbon::parse($data['finished_at'])->utc()->toDateTimeString()
-                : now(),
-            'lock_expires_at' => null,
-            'locked_by' => null,
-            'error_text' => $data['error_text'] ?? null,
-            'stats' => $stats,
-            'items_found' => $stats['items_found'] ?? $syncRun->items_found,
-            'items_created' => $stats['items_created'] ?? $syncRun->items_created,
-            'items_updated' => $stats['items_updated'] ?? $syncRun->items_updated,
-            'segments_found' => $stats['segments_found'] ?? $syncRun->segments_found,
-            'segments_created' => $stats['segments_created'] ?? $syncRun->segments_created,
-            'segments_updated' => $stats['segments_updated'] ?? $syncRun->segments_updated,
-        ])->save();
+        $syncRun = DB::transaction(function () use ($syncRun, $data, $stats) {
+            $syncRun = SyncRun::query()->lockForUpdate()->findOrFail($syncRun->id);
 
-        $this->updateCredentialStatus($syncRun);
+            if (in_array($syncRun->status, ['finished', 'failed'], true)) {
+                if ($syncRun->status !== $data['status']) {
+                    throw new ConflictHttpException('The sync run is already closed with another status.');
+                }
+
+                return $syncRun;
+            }
+
+            if (! in_array($syncRun->status, ['queued', 'running'], true)) {
+                throw new ConflictHttpException('The sync run cannot be finished from its current status.');
+            }
+
+            $syncRun->forceFill([
+                'status' => $data['status'],
+                'finished_at' => isset($data['finished_at'])
+                    ? Carbon::parse($data['finished_at'])->utc()->toDateTimeString()
+                    : now(),
+                'lock_expires_at' => null,
+                'locked_by' => null,
+                'error_text' => $data['status'] === 'failed' ? ($data['error_text'] ?? null) : null,
+                'stats' => array_merge($syncRun->stats ?? [], $stats),
+                'items_found' => $stats['items_found'] ?? $syncRun->items_found,
+                'items_created' => $stats['items_created'] ?? $syncRun->items_created,
+                'items_updated' => $stats['items_updated'] ?? $syncRun->items_updated,
+                'segments_found' => $stats['segments_found'] ?? $syncRun->segments_found,
+                'segments_created' => $stats['segments_created'] ?? $syncRun->segments_created,
+                'segments_updated' => $stats['segments_updated'] ?? $syncRun->segments_updated,
+            ])->save();
+
+            $this->updateCredentialStatus($syncRun);
+
+            return $syncRun;
+        });
 
         Log::info('Sync run finished', [
             'sync_run_id' => $syncRun->id,
