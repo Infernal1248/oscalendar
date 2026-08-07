@@ -15,6 +15,7 @@ class PartialSyncResultRequest extends SyncResultRequest
             'chunk_kind' => ['required', 'string', Rule::in(['roster', 'flight_segments'])],
             'is_final' => ['required', 'boolean', Rule::in([false])],
             'roster_source_external_id' => ['present', 'nullable', 'string', 'max:64'],
+            'roster_period' => ['nullable', 'date_format:Y-m'],
             'roster_items' => ['present', 'array'],
             'flight_segments' => ['present', 'array'],
         ]);

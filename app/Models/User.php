@@ -68,4 +68,9 @@ class User extends Authenticatable
     {
         return $this->hasMany(SyncRun::class);
     }
+
+    public function parserTasks(): HasMany
+    {
+        return $this->hasMany(ParserTask::class);
+    }
 }

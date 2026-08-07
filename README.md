@@ -28,10 +28,12 @@ Recommended parser VM flow:
 
 1. Supervisor calls `POST /api/internal/parser-jobs/claim`.
 2. If `job` is not `null`, supervisor starts one isolated worker process for that job.
-3. Worker uses `job.login` and `job.password` to parse one user.
+3. Worker dispatches either `roster_refresh` or `flight_details` from `job.task_type`.
 4. Worker may call heartbeat while parsing.
-5. Worker sends parsed data to `POST /api/internal/sync-result`.
-6. On parser failure before a result exists, worker calls `POST /api/internal/sync-runs/{id}/finish` with `status=failed`.
+5. Worker sends incremental data to `POST /api/internal/sync-runs/{id}/partial-result`.
+6. Worker closes the execution through `POST /api/internal/sync-runs/{id}/finish`.
+
+`parser_tasks` stores recurring schedules and leases. `sync_runs.worker_id` stores the worker that executed each attempt together with timing, duration, status, error, and counters. A task returns to `scheduled` after a run; it is not duplicated for every interval.
 
 Claim one user job:
 
@@ -47,9 +49,12 @@ Request:
   "portal": "rossiya_edu",
   "locked_by": "parser-vm-1:supervisor",
   "lock_seconds": 900,
-  "user_id": null
+  "user_id": null,
+  "capabilities": ["typed_tasks_v1"]
 }
 ```
+
+The capability is required so an old monolithic worker cannot claim a typed task during a mixed-version deployment.
 
 Response when a job exists:
 
@@ -58,6 +63,17 @@ Response when a job exists:
   "ok": true,
   "job": {
     "sync_run_id": 123,
+    "task_id": 45,
+    "task_type": "flight_details",
+    "task_payload": {
+      "roster_item_id": 78,
+      "source_external_id": "1631777",
+      "source_request_raw": "1631777,2026-08-08 10:00:00.000,1",
+      "boards_raw": "RA-89123",
+      "starts_at": "2026-08-08T10:00:00+00:00",
+      "ends_at": "2026-08-08T12:00:00+00:00",
+      "roster_updated_at": "2026-08-07T12:00:00+00:00"
+    },
     "user_id": 1,
     "source": "rossiya_edu",
     "portal": "rossiya_edu",
@@ -69,6 +85,28 @@ Response when a job exists:
   }
 }
 ```
+
+`roster_refresh` payload contains the current and next month as `months`. Its roster chunks create or refresh one `flight_details` task per eligible roster item.
+
+Flight detail cadence is based on the current distance to the flight:
+
+- within 24 hours or currently in progress: 15 minutes;
+- 1-3 days: 1 hour;
+- 3-4 days: 3 hours;
+- 4-7 days: 6 hours;
+- 7+ days: 12 hours;
+- during the first 24 hours after completion: 1 hour;
+- later than 24 hours after completion: task becomes `completed`.
+
+Configure scheduling and per-user parallelism:
+
+```env
+PARSER_ROSTER_INTERVAL_MINUTES=60
+PARSER_RETRY_INTERVAL_MINUTES=10
+PARSER_MAX_CONCURRENT_PER_USER=3
+```
+
+Run `php artisan migrate --force` after deployment to create the task table and execution links.
 
 Response when no users are ready:
 
@@ -182,7 +220,7 @@ Sync run log requested
 
 The logs include ids, statuses, counts, lock owner, and context keys. They do not include decrypted portal passwords or full parser payloads.
 
-If a parser worker fails before sending `/sync-result`, it should call `/sync-runs/{id}/finish` with `status=failed`; otherwise the same user can be claimed again after `lock_expires_at`.
+If a worker lease expires, Laravel closes its execution as failed and makes the same recurring task immediately claimable again.
 
 ## Idempotency
 

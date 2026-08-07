@@ -7,8 +7,10 @@ use App\Http\Requests\Internal\PartialSyncResultRequest;
 use App\Models\SyncRun;
 use App\Services\SyncResultService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 class PartialSyncResultController extends Controller
 {
@@ -35,6 +37,14 @@ class PartialSyncResultController extends Controller
             throw ValidationException::withMessages([
                 'source' => ['The source does not belong to this sync run.'],
             ]);
+        }
+
+        if ($syncRun->task_type === 'flight_details' && $syncRun->roster_item_id) {
+            $expectedVersion = $syncRun->task_payload['roster_updated_at'] ?? null;
+            $currentVersion = optional($syncRun->rosterItem)->updated_at;
+            if ($expectedVersion && $currentVersion && ! $currentVersion->equalTo(Carbon::parse($expectedVersion))) {
+                throw new ConflictHttpException('The roster item changed while flight details were being parsed.');
+            }
         }
 
         Log::info('Partial sync result received', [

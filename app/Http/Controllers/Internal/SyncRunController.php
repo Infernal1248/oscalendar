@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Internal;
 use App\Http\Controllers\Controller;
 use App\Models\PortalCredential;
 use App\Models\SyncRun;
+use App\Services\ParserTaskScheduler;
 use Illuminate\Support\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -46,7 +47,7 @@ class SyncRunController extends Controller
         ], 201);
     }
 
-    public function finish(Request $request, SyncRun $syncRun): JsonResponse
+    public function finish(Request $request, SyncRun $syncRun, ParserTaskScheduler $taskScheduler): JsonResponse
     {
         $data = $request->validate([
             'status' => ['required', 'string', Rule::in(['finished', 'failed'])],
@@ -72,7 +73,7 @@ class SyncRunController extends Controller
             'stats' => $stats,
         ]);
 
-        $syncRun = DB::transaction(function () use ($syncRun, $data, $stats) {
+        $syncRun = DB::transaction(function () use ($syncRun, $data, $stats, $taskScheduler) {
             $syncRun = SyncRun::query()->lockForUpdate()->findOrFail($syncRun->id);
 
             if (in_array($syncRun->status, ['finished', 'failed'], true)) {
@@ -87,11 +88,15 @@ class SyncRunController extends Controller
                 throw new ConflictHttpException('The sync run cannot be finished from its current status.');
             }
 
+            $finishedAt = isset($data['finished_at'])
+                ? Carbon::parse($data['finished_at'])->utc()
+                : now();
             $syncRun->forceFill([
                 'status' => $data['status'],
-                'finished_at' => isset($data['finished_at'])
-                    ? Carbon::parse($data['finished_at'])->utc()->toDateTimeString()
-                    : now(),
+                'finished_at' => $finishedAt,
+                'duration_ms' => $syncRun->started_at
+                    ? $syncRun->started_at->diffInMilliseconds($finishedAt)
+                    : null,
                 'lock_expires_at' => null,
                 'locked_by' => null,
                 'error_text' => $data['status'] === 'failed' ? ($data['error_text'] ?? null) : null,
@@ -105,6 +110,7 @@ class SyncRunController extends Controller
             ])->save();
 
             $this->updateCredentialStatus($syncRun);
+            $taskScheduler->completeTask($syncRun);
 
             return $syncRun;
         });

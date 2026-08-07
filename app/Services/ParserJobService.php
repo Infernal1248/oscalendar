@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ParserTask;
 use App\Models\PortalCredential;
 use App\Models\SyncRun;
 use Illuminate\Support\Carbon;
@@ -11,6 +12,10 @@ use Illuminate\Support\Facades\Log;
 
 class ParserJobService
 {
+    public function __construct(private ParserTaskScheduler $scheduler)
+    {
+    }
+
     public function claim(array $options): ?array
     {
         return DB::transaction(function () use ($options) {
@@ -21,45 +26,28 @@ class ParserJobService
             $userId = $options['user_id'] ?? null;
             $now = now();
 
-            $syncRun = $this->claimQueuedRun($source, $lockedBy, $lockSeconds, $now, $userId)
-                ?: $this->createAndClaimRun($source, $portal, $lockedBy, $lockSeconds, $now, $userId);
+            $this->scheduler->ensureRosterTasks($source, $portal);
+            $this->releaseExpiredTasks($source, $now);
 
-            if (! $syncRun) {
-                Log::info('Parser job service found no claimable user', [
+            $claimed = $this->claimDueTask($source, $portal, $lockedBy, $lockSeconds, $now, $userId);
+            if (! $claimed) {
+                Log::info('Parser job service found no due task', [
                     'source' => $source,
                     'portal' => $portal,
                     'user_id' => $userId,
                 ]);
-
                 return null;
             }
 
-            $credential = PortalCredential::query()
-                ->where('user_id', $syncRun->user_id)
-                ->where('portal', $portal)
-                ->where('status', 'active')
-                ->first();
-
-            if (! $credential) {
-                Log::warning('Parser job failed: active credentials missing after claim', [
-                    'sync_run_id' => $syncRun->id,
-                    'user_id' => $syncRun->user_id,
-                    'portal' => $portal,
-                ]);
-
-                $syncRun->forceFill([
-                    'status' => 'failed',
-                    'finished_at' => $now,
-                    'error_text' => 'Active portal credentials not found.',
-                ])->save();
-
-                return null;
-            }
+            [$task, $credential, $syncRun, $taskPayload] = $claimed;
 
             return [
                 'sync_run_id' => $syncRun->id,
-                'user_id' => $syncRun->user_id,
-                'source' => $syncRun->source,
+                'task_id' => $task->id,
+                'task_type' => $task->task_type,
+                'task_payload' => $taskPayload,
+                'user_id' => $task->user_id,
+                'source' => $task->source,
                 'portal' => $credential->portal,
                 'login' => $credential->login,
                 'password' => Crypt::decryptString($credential->password_encrypted),
@@ -67,110 +55,220 @@ class ParserJobService
                 'locked_by' => $syncRun->locked_by,
                 'lock_expires_at' => optional($syncRun->lock_expires_at)->toIso8601String(),
             ];
-        });
+        }, 3);
     }
 
     public function heartbeat(SyncRun $syncRun, array $data): SyncRun
     {
         $lockSeconds = (int) ($data['lock_seconds'] ?? 900);
+        $now = now();
+        $lockedBy = $data['locked_by'] ?? $syncRun->locked_by;
 
-        $syncRun->forceFill([
-            'heartbeat_at' => now(),
-            'lock_expires_at' => now()->addSeconds($lockSeconds),
-            'locked_by' => $data['locked_by'] ?? $syncRun->locked_by,
-        ])->save();
+        return DB::transaction(function () use ($syncRun, $lockSeconds, $now, $lockedBy) {
+            $syncRun = SyncRun::query()->lockForUpdate()->findOrFail($syncRun->id);
+            $syncRun->forceFill([
+                'heartbeat_at' => $now,
+                'lock_expires_at' => $now->copy()->addSeconds($lockSeconds),
+                'locked_by' => $lockedBy,
+                'worker_id' => $syncRun->worker_id ?: $lockedBy,
+            ])->save();
 
-        return $syncRun;
+            if ($syncRun->parser_task_id) {
+                ParserTask::query()
+                    ->whereKey($syncRun->parser_task_id)
+                    ->where('status', 'running')
+                    ->update([
+                        'lock_expires_at' => $now->copy()->addSeconds($lockSeconds),
+                        'locked_by' => $lockedBy,
+                    ]);
+            }
+
+            return $syncRun;
+        });
     }
 
-    private function claimQueuedRun(string $source, string $lockedBy, int $lockSeconds, Carbon $now, ?int $userId): ?SyncRun
+    private function claimDueTask(
+        string $source,
+        string $portal,
+        string $lockedBy,
+        int $lockSeconds,
+        Carbon $now,
+        ?int $userId
+    ): ?array {
+        $excludedUsers = [];
+        $maxPerUser = max(1, (int) config('parser.max_concurrent_per_user', 3));
+
+        for ($attempt = 0; $attempt < 20; $attempt++) {
+            $query = ParserTask::query()
+                ->select('parser_tasks.*')
+                ->join('portal_credentials', function ($join) {
+                    $join->on('portal_credentials.user_id', '=', 'parser_tasks.user_id')
+                        ->on('portal_credentials.portal', '=', 'parser_tasks.portal');
+                })
+                ->join('users', 'users.id', '=', 'parser_tasks.user_id')
+                ->where('parser_tasks.source', $source)
+                ->where('parser_tasks.portal', $portal)
+                ->where('parser_tasks.status', 'scheduled')
+                ->where('parser_tasks.next_run_at', '<=', $now)
+                ->where('portal_credentials.status', 'active')
+                ->where('users.status', 'active')
+                ->orderByDesc('parser_tasks.priority')
+                ->orderBy('parser_tasks.next_run_at')
+                ->orderBy('parser_tasks.id');
+
+            if ($userId) {
+                $query->where('parser_tasks.user_id', $userId);
+            }
+            if ($excludedUsers) {
+                $query->whereNotIn('parser_tasks.user_id', $excludedUsers);
+            }
+
+            $task = $query->lockForUpdate()->first();
+            if (! $task) {
+                return null;
+            }
+
+            $credential = PortalCredential::query()
+                ->where('user_id', $task->user_id)
+                ->where('portal', $task->portal)
+                ->where('status', 'active')
+                ->lockForUpdate()
+                ->first();
+            if (! $credential) {
+                $task->forceFill(['status' => 'paused', 'next_run_at' => null])->save();
+                continue;
+            }
+
+            $activeRuns = SyncRun::query()
+                ->where('user_id', $task->user_id)
+                ->where('status', 'running')
+                ->where('lock_expires_at', '>', $now)
+                ->count();
+            if ($activeRuns >= $maxPerUser) {
+                $excludedUsers[] = $task->user_id;
+                continue;
+            }
+
+            $taskPayload = $this->taskPayload($task);
+            if ($taskPayload === null) {
+                $task->forceFill(['status' => 'completed', 'next_run_at' => null])->save();
+                continue;
+            }
+
+            $task->forceFill([
+                'status' => 'running',
+                'locked_at' => $now,
+                'lock_expires_at' => $now->copy()->addSeconds($lockSeconds),
+                'locked_by' => $lockedBy,
+                'attempts' => $task->attempts + 1,
+                'last_started_at' => $now,
+            ])->save();
+
+            $syncRun = SyncRun::query()->create([
+                'user_id' => $task->user_id,
+                'parser_task_id' => $task->id,
+                'roster_item_id' => $task->roster_item_id,
+                'source' => $task->source,
+                'task_type' => $task->task_type,
+                'task_payload' => $taskPayload,
+                'trigger' => 'scheduler',
+                'status' => 'running',
+                'started_at' => $now,
+                'claimed_at' => $now,
+                'heartbeat_at' => $now,
+                'lock_expires_at' => $now->copy()->addSeconds($lockSeconds),
+                'locked_by' => $lockedBy,
+                'attempt' => $task->attempts,
+            ]);
+
+            return [$task, $credential, $syncRun, $taskPayload];
+        }
+
+        return null;
+    }
+
+    private function taskPayload(ParserTask $task): ?array
     {
-        $query = SyncRun::query()
+        if ($task->task_type === 'roster_refresh') {
+            $month = now()->utc()->startOfMonth();
+            return [
+                'months' => [
+                    $month->format('Y-m'),
+                    $month->copy()->addMonth()->format('Y-m'),
+                ],
+            ];
+        }
+
+        if ($task->task_type !== 'flight_details') {
+            return null;
+        }
+
+        $item = $task->rosterItem()->first();
+        if (! $item || ! $item->is_actual || $item->is_removed_from_source || ! $item->source_request_raw) {
+            return null;
+        }
+
+        return [
+            'roster_item_id' => $item->id,
+            'source_external_id' => $item->source_external_id,
+            'source_request_raw' => $item->source_request_raw,
+            'boards_raw' => $item->boards_raw,
+            'starts_at' => optional($item->starts_at)->utc()->toIso8601String(),
+            'ends_at' => optional($item->ends_at)->utc()->toIso8601String(),
+            'roster_updated_at' => optional($item->updated_at)->utc()->toIso8601String(),
+        ];
+    }
+
+    private function releaseExpiredTasks(string $source, Carbon $now): void
+    {
+        $taskIds = ParserTask::query()
             ->where('source', $source)
-            ->whereIn('status', ['queued', 'running'])
-            ->where(function ($query) use ($now) {
-                $query->where('status', 'queued')
-                    ->orWhere(function ($query) use ($now) {
-                        $query->where('status', 'running')
-                            ->whereNotNull('lock_expires_at')
-                            ->where('lock_expires_at', '<', $now);
-                    });
-            })
-            ->orderBy('created_at');
+            ->where('status', 'running')
+            ->whereNotNull('lock_expires_at')
+            ->where('lock_expires_at', '<', $now)
+            ->limit(50)
+            ->pluck('id');
 
-        if ($userId) {
-            $query->where('user_id', $userId);
+        foreach ($taskIds as $taskId) {
+            $runs = SyncRun::query()
+                ->where('parser_task_id', $taskId)
+                ->where('status', 'running')
+                ->lockForUpdate()
+                ->get();
+            $task = ParserTask::query()
+                ->whereKey($taskId)
+                ->where('status', 'running')
+                ->where('lock_expires_at', '<', $now)
+                ->lockForUpdate()
+                ->first();
+            if (! $task) {
+                continue;
+            }
+
+            $runs
+                ->each(function (SyncRun $run) use ($now) {
+                    $run->forceFill([
+                        'status' => 'failed',
+                        'finished_at' => $now,
+                        'duration_ms' => $run->started_at
+                            ? $run->started_at->diffInMilliseconds($now)
+                            : null,
+                        'lock_expires_at' => null,
+                        'locked_by' => null,
+                        'error_text' => 'Parser worker lease expired.',
+                    ])->save();
+                });
+
+            $task->forceFill([
+                'status' => 'scheduled',
+                'next_run_at' => $now,
+                'locked_at' => null,
+                'lock_expires_at' => null,
+                'locked_by' => null,
+                'last_finished_at' => $now,
+                'last_error_at' => $now,
+                'last_error_text' => 'Parser worker lease expired.',
+            ])->save();
         }
-
-        $syncRun = $query->lockForUpdate()->first();
-
-        if (! $syncRun) {
-            Log::info('Parser job service found no queued or expired run', [
-                'source' => $source,
-                'user_id' => $userId,
-            ]);
-
-            return null;
-        }
-
-        $syncRun->forceFill([
-            'status' => 'running',
-            'claimed_at' => $now,
-            'started_at' => $syncRun->started_at ?: $now,
-            'heartbeat_at' => $now,
-            'lock_expires_at' => $now->copy()->addSeconds($lockSeconds),
-            'locked_by' => $lockedBy,
-            'attempt' => $syncRun->attempt + 1,
-        ])->save();
-
-        return $syncRun;
-    }
-
-    private function createAndClaimRun(string $source, string $portal, string $lockedBy, int $lockSeconds, Carbon $now, ?int $userId): ?SyncRun
-    {
-        $credentialQuery = PortalCredential::query()
-            ->select('portal_credentials.*')
-            ->join('users', 'users.id', '=', 'portal_credentials.user_id')
-            ->where('users.status', 'active')
-            ->where('portal_credentials.portal', $portal)
-            ->where('portal_credentials.status', 'active')
-            ->whereNotExists(function ($query) use ($source) {
-                $query->select(DB::raw(1))
-                    ->from('sync_runs')
-                    ->whereColumn('sync_runs.user_id', 'portal_credentials.user_id')
-                    ->where('sync_runs.source', $source)
-                    ->whereIn('sync_runs.status', ['queued', 'running']);
-            })
-            ->orderBy('portal_credentials.last_success_at')
-            ->orderBy('portal_credentials.updated_at');
-
-        if ($userId) {
-            $credentialQuery->where('portal_credentials.user_id', $userId);
-        }
-
-        $credential = $credentialQuery->lockForUpdate()->first();
-
-        if (! $credential) {
-            Log::info('Parser job service found no ready credentials', [
-                'source' => $source,
-                'portal' => $portal,
-                'user_id' => $userId,
-            ]);
-
-            return null;
-        }
-
-        return SyncRun::query()->create([
-            'user_id' => $credential->user_id,
-            'source' => $source,
-            'trigger' => 'scheduler',
-            'status' => 'running',
-            'started_at' => $now,
-            'claimed_at' => $now,
-            'heartbeat_at' => $now,
-            'lock_expires_at' => $now->copy()->addSeconds($lockSeconds),
-            'locked_by' => $lockedBy,
-            'attempt' => 1,
-        ]);
     }
 }

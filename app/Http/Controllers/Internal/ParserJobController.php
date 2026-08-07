@@ -8,6 +8,7 @@ use App\Services\ParserJobService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 class ParserJobController extends Controller
 {
@@ -19,6 +20,8 @@ class ParserJobController extends Controller
             'locked_by' => ['nullable', 'string', 'max:150'],
             'lock_seconds' => ['nullable', 'integer', 'min:60', 'max:7200'],
             'user_id' => ['nullable', 'integer', 'exists:users,id'],
+            'capabilities' => ['required', 'array', 'min:1'],
+            'capabilities.*' => ['string', Rule::in(['typed_tasks_v1'])],
         ]);
 
         Log::info('Parser job claim requested', [
@@ -27,6 +30,7 @@ class ParserJobController extends Controller
             'locked_by' => $data['locked_by'] ?? null,
             'lock_seconds' => $data['lock_seconds'] ?? null,
             'user_id' => $data['user_id'] ?? null,
+            'capabilities' => $data['capabilities'],
         ]);
 
         $job = $service->claim($data);
@@ -46,6 +50,8 @@ class ParserJobController extends Controller
 
         Log::info('Parser job claimed', [
             'sync_run_id' => $job['sync_run_id'],
+            'task_id' => $job['task_id'],
+            'task_type' => $job['task_type'],
             'user_id' => $job['user_id'],
             'source' => $job['source'],
             'portal' => $job['portal'],

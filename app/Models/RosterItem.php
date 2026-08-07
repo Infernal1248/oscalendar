@@ -44,4 +44,9 @@ class RosterItem extends Model
     {
         return $this->hasMany(FlightSegment::class);
     }
+
+    public function parserTasks(): HasMany
+    {
+        return $this->hasMany(ParserTask::class);
+    }
 }

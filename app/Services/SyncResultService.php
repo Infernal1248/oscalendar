@@ -14,6 +14,10 @@ use Illuminate\Support\Facades\Log;
 
 class SyncResultService
 {
+    public function __construct(private ParserTaskScheduler $taskScheduler)
+    {
+    }
+
     public function store(array $payload): array
     {
         return DB::transaction(function () use ($payload) {
@@ -128,13 +132,32 @@ class SyncResultService
             $item = RosterItem::query()->firstOrNew($identity);
             $created = ! $item->exists;
             $item->fill($this->rosterAttributes($userId, $source, $itemPayload));
+            $detailsChanged = $created || $item->isDirty([
+                'source_external_id',
+                'source_request_raw',
+                'boards_raw',
+                'starts_at',
+                'ends_at',
+                'is_actual',
+                'is_removed_from_source',
+            ]);
             $item->save();
+            $this->taskScheduler->scheduleFlightDetails($item, $detailsChanged);
 
             $stats[$created ? 'items_created' : 'items_updated']++;
 
             if (! empty($item->source_external_id)) {
                 $rosterByExternalId[$item->source_external_id] = $item;
             }
+        }
+
+        if (($payload['chunk_kind'] ?? null) === 'roster' && ! empty($payload['roster_period'])) {
+            $stats['items_updated'] += $this->markMissingRosterItems(
+                $userId,
+                $source,
+                $payload['roster_period'],
+                array_keys($rosterByExternalId)
+            );
         }
 
         foreach ($payload['flight_segments'] ?? [] as $segmentPayload) {
@@ -181,6 +204,36 @@ class SyncResultService
         }
 
         return $stats;
+    }
+
+    private function markMissingRosterItems(int $userId, string $source, string $period, array $seenExternalIds): int
+    {
+        $start = Carbon::createFromFormat('Y-m', $period, 'UTC')->startOfMonth();
+        $end = $start->copy()->addMonth();
+        $query = RosterItem::query()
+            ->where('user_id', $userId)
+            ->where('source', $source)
+            ->whereNotNull('source_external_id')
+            ->where('starts_at', '>=', $start)
+            ->where('starts_at', '<', $end)
+            ->where(function ($query) {
+                $query->where('is_actual', true)
+                    ->orWhere('is_removed_from_source', false);
+            });
+        if ($seenExternalIds) {
+            $query->whereNotIn('source_external_id', $seenExternalIds);
+        }
+
+        $items = $query->get();
+        foreach ($items as $item) {
+            $item->forceFill([
+                'is_actual' => false,
+                'is_removed_from_source' => true,
+            ])->save();
+            $this->taskScheduler->scheduleFlightDetails($item, true);
+        }
+
+        return $items->count();
     }
 
     private function partialResponse(SyncRun $syncRun, string $chunkKind, bool $duplicate): array
