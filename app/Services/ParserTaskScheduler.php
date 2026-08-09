@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ParserTask;
 use App\Models\PortalCredential;
+use App\Models\RosterChangeEvent;
 use App\Models\RosterItem;
 use App\Models\SyncRun;
 use Illuminate\Support\Carbon;
@@ -101,6 +102,40 @@ class ParserTaskScheduler
         return $task;
     }
 
+    public function scheduleRosterAcknowledgement(RosterChangeEvent $event): ?ParserTask
+    {
+        return DB::transaction(function () use ($event) {
+            $event = RosterChangeEvent::query()->lockForUpdate()->findOrFail($event->id);
+            if ($event->status !== 'pending') {
+                return null;
+            }
+
+            $task = ParserTask::query()->firstOrNew([
+                'task_key' => "acknowledge_roster_changes:{$event->source}:event:{$event->id}",
+            ]);
+            $task->forceFill([
+                'user_id' => $event->user_id,
+                'source' => $event->source,
+                'portal' => $event->source,
+                'task_type' => 'acknowledge_roster_changes',
+                'status' => 'scheduled',
+                'priority' => 120,
+                'next_run_at' => now(),
+                'payload' => [
+                    'roster_change_event_id' => $event->id,
+                    'period' => $event->period,
+                    'change_hash' => $event->change_hash,
+                ],
+            ])->save();
+            $event->forceFill([
+                'status' => 'acknowledgement_requested',
+                'acknowledgement_requested_at' => now(),
+            ])->save();
+
+            return $task;
+        });
+    }
+
     public function completeTask(SyncRun $syncRun): void
     {
         if (! $syncRun->parser_task_id) {
@@ -132,7 +167,7 @@ class ParserTaskScheduler
                     $finishedAt,
                     max(1, (int) config('parser.roster_interval_minutes', 60)) * 60
                 );
-            } else {
+            } elseif ($task->task_type === 'flight_details') {
                 $item = $task->rosterItem()->first();
                 [$priority, $nextRunAt] = $item
                     ? $this->flightSchedule($item, $finishedAt)
@@ -147,6 +182,10 @@ class ParserTaskScheduler
                 $attributes['refresh_requested'] = false;
                 $attributes['status'] = $nextRunAt ? 'scheduled' : 'completed';
                 $attributes['next_run_at'] = $nextRunAt;
+            } else {
+                $attributes['status'] = 'completed';
+                $attributes['next_run_at'] = null;
+                $attributes['refresh_requested'] = false;
             }
         } else {
             $attributes['last_error_at'] = $finishedAt;

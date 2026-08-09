@@ -21,7 +21,7 @@ class ParserJobController extends Controller
             'lock_seconds' => ['nullable', 'integer', 'min:60', 'max:7200'],
             'user_id' => ['nullable', 'integer', 'exists:users,id'],
             'capabilities' => ['required', 'array', 'min:1'],
-            'capabilities.*' => ['string', Rule::in(['typed_tasks_v1'])],
+            'capabilities.*' => ['string', Rule::in(['typed_tasks_v1', 'roster_acknowledgement_v1'])],
         ]);
 
         Log::info('Parser job claim requested', [

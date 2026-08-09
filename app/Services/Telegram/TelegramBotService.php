@@ -6,8 +6,10 @@ use App\Models\CalendarFeed;
 use App\Models\FlightSegment;
 use App\Models\PortalCredential;
 use App\Models\RosterItem;
+use App\Models\RosterChangeEvent;
 use App\Models\TelegramAccount;
 use App\Models\User;
+use App\Services\ParserTaskScheduler;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Log;
@@ -22,7 +24,11 @@ class TelegramBotService
 
     private $client;
 
-    public function __construct(TelegramBotClient $client)
+    public function __construct(
+        TelegramBotClient $client,
+        private ParserTaskScheduler $taskScheduler,
+        private RosterChangeNotifier $rosterChangeNotifier
+    )
     {
         $this->client = $client;
     }
@@ -286,13 +292,46 @@ class TelegramBotService
         $chatId = (int) ($callback['message']['chat']['id'] ?? $account->telegram_id);
         $data = (string) ($callback['data'] ?? '');
 
-        if (! empty($callback['id'])) {
-            $this->client->answerCallbackQuery($callback['id']);
-        }
-
         if (! $this->isActiveUser($account)) {
+            if (! empty($callback['id'])) {
+                $this->client->answerCallbackQuery($callback['id']);
+            }
             $this->sendPendingMessage($chatId, $account);
             return;
+        }
+
+        if (preg_match('/^roster\.ack:(\d+)$/', $data, $matches)) {
+            $event = RosterChangeEvent::query()
+                ->whereKey((int) $matches[1])
+                ->where('user_id', $account->user_id)
+                ->first();
+            if (! $event || $event->status === 'superseded') {
+                $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Появились более новые изменения.');
+                return;
+            }
+            if ($event->status === 'acknowledged') {
+                $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Изменения уже подтверждены.');
+                return;
+            }
+            if ($event->status === 'acknowledgement_requested') {
+                $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Подтверждение уже выполняется.');
+                return;
+            }
+
+            $task = $this->taskScheduler->scheduleRosterAcknowledgement($event);
+            if (! $task) {
+                $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Состояние изменений уже обновилось.');
+                return;
+            }
+            $event->refresh();
+            $this->rosterChangeNotifier->removeButtons($event);
+            $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Подтверждение поставлено в очередь.');
+            $this->client->sendMessage($chatId, 'Подтверждаем ознакомление с изменениями…');
+            return;
+        }
+
+        if (! empty($callback['id'])) {
+            $this->client->answerCallbackQuery($callback['id']);
         }
 
         if (preg_match('/^details\.flight:(\d+)$/', $data, $matches)) {

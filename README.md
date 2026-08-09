@@ -28,7 +28,7 @@ Recommended parser VM flow:
 
 1. Supervisor calls `POST /api/internal/parser-jobs/claim`.
 2. If `job` is not `null`, supervisor starts one isolated worker process for that job.
-3. Worker dispatches either `roster_refresh` or `flight_details` from `job.task_type`.
+3. Worker dispatches `roster_refresh`, `flight_details`, or `acknowledge_roster_changes` from `job.task_type`.
 4. Worker may call heartbeat while parsing.
 5. Worker sends incremental data to `POST /api/internal/sync-runs/{id}/partial-result`.
 6. Worker closes the execution through `POST /api/internal/sync-runs/{id}/finish`.
@@ -88,6 +88,12 @@ Response when a job exists:
 
 `roster_refresh` payload contains the current and next month as `months`. Its roster chunks create or refresh one `flight_details` task per eligible roster item.
 
+When a roster page contains the acknowledgement button or `warning`/`plan_new` markup, Laravel stores a versioned `roster_change_event`. A new change hash always produces a new Telegram message. The message shows the complete previous task and a `Было`/`Стало` list only for fields whose values changed. The inline acknowledgement button schedules a high-priority `acknowledge_roster_changes` task; it never calls the portal from the webhook request.
+
+The acknowledgement task is serialized only against `roster_refresh` for the same user. Flight-detail tasks remain concurrent. After the VM posts `accept=1`, it reloads the month and Laravel sends the confirmation with the current task only after the portal reports a confirmed form and removes all `warning`/`plan_new` markup.
+
+The VM advertises `roster_acknowledgement_v1` while claiming jobs. Laravel does not give acknowledgement tasks to an older parser that only supports the original typed-task contract.
+
 Flight detail cadence is based on the current distance to the flight:
 
 - within 24 hours or currently in progress: 15 minutes;
@@ -106,7 +112,7 @@ PARSER_RETRY_INTERVAL_MINUTES=10
 PARSER_MAX_CONCURRENT_PER_USER=3
 ```
 
-Run `php artisan migrate --force` after deployment to create the task table and execution links.
+Run `php artisan migrate --force` after deployment to create the task, execution, and roster-change event tables.
 
 Response when no users are ready:
 

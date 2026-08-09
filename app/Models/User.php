@@ -73,4 +73,9 @@ class User extends Authenticatable
     {
         return $this->hasMany(ParserTask::class);
     }
+
+    public function rosterChangeEvents(): HasMany
+    {
+        return $this->hasMany(RosterChangeEvent::class);
+    }
 }

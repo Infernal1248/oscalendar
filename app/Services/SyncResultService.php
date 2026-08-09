@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\FlightSegment;
 use App\Models\PortalCredential;
+use App\Models\RosterChangeEvent;
 use App\Models\RosterItem;
 use App\Models\SyncRun;
 use App\Models\SyncRunPartialChunk;
@@ -14,7 +15,10 @@ use Illuminate\Support\Facades\Log;
 
 class SyncResultService
 {
-    public function __construct(private ParserTaskScheduler $taskScheduler)
+    public function __construct(
+        private ParserTaskScheduler $taskScheduler,
+        private RosterChangeService $rosterChangeService
+    )
     {
     }
 
@@ -32,7 +36,8 @@ class SyncResultService
                 'segments_found' => count($payload['flight_segments'] ?? []),
             ]);
 
-            $stats = $this->persistPayload($payload);
+            $persisted = $this->persistPayload($payload);
+            $stats = $persisted['stats'];
             $syncRun = $this->resolveSyncRun($payload, $stats);
 
             $syncRun->forceFill(array_merge($stats, [
@@ -72,14 +77,35 @@ class SyncResultService
                 ->first();
 
             if ($existingChunk) {
-                return $this->partialResponse($syncRun, $payload['chunk_kind'], true);
+                $response = $this->partialResponse($syncRun, $payload['chunk_kind'], true);
+                if (($payload['chunk_kind'] ?? null) === 'roster' && ! empty($payload['roster_period'])) {
+                    $event = RosterChangeEvent::query()
+                        ->where('user_id', $syncRun->user_id)
+                        ->where('source', $syncRun->source)
+                        ->where('period', $payload['roster_period'])
+                        ->where('status', 'pending')
+                        ->whereNull('notified_at')
+                        ->latest('id')
+                        ->first();
+                    if ($event) {
+                        $response['roster_change_event_id'] = $event->id;
+                    }
+                }
+                if (($payload['chunk_kind'] ?? null) === 'roster_acknowledgement') {
+                    $event = RosterChangeEvent::query()->find($payload['roster_change_event_id'] ?? 0);
+                    if ($event && $event->status === 'acknowledged' && ! $event->acknowledgement_notified_at) {
+                        $response['acknowledged_event_id'] = $event->id;
+                    }
+                }
+                return $response;
             }
 
             if (! in_array($syncRun->status, ['queued', 'running'], true)) {
                 throw new ConflictHttpException('The sync run is already closed.');
             }
 
-            $chunkStats = $this->persistPayload($payload);
+            $persisted = $this->persistPayload($payload);
+            $chunkStats = $persisted['stats'];
 
             SyncRunPartialChunk::query()->create([
                 'sync_run_id' => $syncRun->id,
@@ -105,7 +131,15 @@ class SyncResultService
                 'stats' => array_merge($syncRun->stats ?? [], $stats),
             ]))->save();
 
-            return $this->partialResponse($syncRun, $payload['chunk_kind'], false);
+            $response = $this->partialResponse($syncRun, $payload['chunk_kind'], false);
+            if ($persisted['roster_change_event']) {
+                $response['roster_change_event_id'] = $persisted['roster_change_event']->id;
+            }
+            if ($persisted['acknowledged_event']) {
+                $response['acknowledged_event_id'] = $persisted['acknowledged_event']->id;
+            }
+
+            return $response;
         });
     }
 
@@ -122,6 +156,7 @@ class SyncResultService
             'segments_updated' => 0,
         ];
         $rosterByExternalId = [];
+        $markedItems = [];
 
         foreach ($payload['roster_items'] ?? [] as $itemPayload) {
             $itemPayload['source_hash'] = empty($itemPayload['source_external_id'])
@@ -131,6 +166,7 @@ class SyncResultService
 
             $item = RosterItem::query()->firstOrNew($identity);
             $created = ! $item->exists;
+            $before = $created ? null : $this->rosterSnapshot($item);
             $item->fill($this->rosterAttributes($userId, $source, $itemPayload));
             $detailsChanged = $created || $item->isDirty([
                 'source_external_id',
@@ -143,6 +179,10 @@ class SyncResultService
             ]);
             $item->save();
             $this->taskScheduler->scheduleFlightDetails($item, $detailsChanged);
+
+            if (($itemPayload['source_payload']['portal_change']['is_changed'] ?? false) === true) {
+                $markedItems[] = ['before' => $before, 'after' => $this->rosterSnapshot($item)];
+            }
 
             $stats[$created ? 'items_created' : 'items_updated']++;
 
@@ -203,7 +243,67 @@ class SyncResultService
             $stats[$created ? 'segments_created' : 'segments_updated']++;
         }
 
-        return $stats;
+        $rosterChangeEvent = null;
+        if (($payload['chunk_kind'] ?? null) === 'roster' && ! empty($payload['roster_period'])) {
+            $rosterChangeEvent = $this->rosterChangeService->recordPending(
+                $userId,
+                $source,
+                $payload['roster_period'],
+                $payload['roster_change_state'] ?? [],
+                $markedItems
+            );
+        }
+
+        $acknowledgedEvent = null;
+        if (($payload['chunk_kind'] ?? null) === 'roster_acknowledgement') {
+            $acknowledgedEvent = RosterChangeEvent::query()
+                ->whereKey($payload['roster_change_event_id'] ?? 0)
+                ->where('user_id', $userId)
+                ->where('source', $source)
+                ->where('change_hash', $payload['roster_change_hash'] ?? '')
+                ->where('status', 'acknowledgement_requested')
+                ->lockForUpdate()
+                ->first();
+            if (! $acknowledgedEvent) {
+                throw new ConflictHttpException('The roster change event is no longer awaiting acknowledgement.');
+            }
+            $acknowledgedEvent->forceFill([
+                'status' => 'acknowledged',
+                'acknowledged_at' => now(),
+                'portal_state' => $payload['roster_change_state'] ?? $acknowledgedEvent->portal_state,
+                'changes' => $this->refreshEventSnapshots($acknowledgedEvent->changes, $rosterByExternalId),
+            ])->save();
+        }
+
+        return [
+            'stats' => $stats,
+            'roster_change_event' => $rosterChangeEvent,
+            'acknowledged_event' => $acknowledgedEvent,
+        ];
+    }
+
+    private function rosterSnapshot(RosterItem $item): array
+    {
+        return [
+            'source_external_id' => $item->source_external_id,
+            'starts_at' => optional($item->starts_at)->utc()->toIso8601String(),
+            'flight_numbers_raw' => $item->flight_numbers_raw,
+            'aircraft_type_raw' => $item->aircraft_type_raw,
+            'boards_raw' => $item->boards_raw,
+            'route_raw' => $item->route_raw,
+        ];
+    }
+
+    private function refreshEventSnapshots(array $changes, array $rosterByExternalId): array
+    {
+        foreach ($changes as $index => $change) {
+            $externalId = $change['source_external_id'] ?? null;
+            if ($externalId && isset($rosterByExternalId[$externalId])) {
+                $changes[$index]['after'] = $this->rosterSnapshot($rosterByExternalId[$externalId]);
+            }
+        }
+
+        return $changes;
     }
 
     private function markMissingRosterItems(int $userId, string $source, string $period, array $seenExternalIds): int

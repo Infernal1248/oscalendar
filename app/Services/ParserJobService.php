@@ -24,12 +24,25 @@ class ParserJobService
             $lockedBy = $options['locked_by'] ?? (gethostname() ?: 'parser');
             $lockSeconds = (int) ($options['lock_seconds'] ?? 900);
             $userId = $options['user_id'] ?? null;
+            $supportsRosterAcknowledgement = in_array(
+                'roster_acknowledgement_v1',
+                $options['capabilities'] ?? [],
+                true
+            );
             $now = now();
 
             $this->scheduler->ensureRosterTasks($source, $portal);
             $this->releaseExpiredTasks($source, $now);
 
-            $claimed = $this->claimDueTask($source, $portal, $lockedBy, $lockSeconds, $now, $userId);
+            $claimed = $this->claimDueTask(
+                $source,
+                $portal,
+                $lockedBy,
+                $lockSeconds,
+                $now,
+                $userId,
+                $supportsRosterAcknowledgement
+            );
             if (! $claimed) {
                 Log::info('Parser job service found no due task', [
                     'source' => $source,
@@ -93,9 +106,11 @@ class ParserJobService
         string $lockedBy,
         int $lockSeconds,
         Carbon $now,
-        ?int $userId
+        ?int $userId,
+        bool $supportsRosterAcknowledgement
     ): ?array {
         $excludedUsers = [];
+        $excludedTaskIds = [];
         $maxPerUser = max(1, (int) config('parser.max_concurrent_per_user', 3));
 
         for ($attempt = 0; $attempt < 20; $attempt++) {
@@ -116,11 +131,18 @@ class ParserJobService
                 ->orderBy('parser_tasks.next_run_at')
                 ->orderBy('parser_tasks.id');
 
+            if (! $supportsRosterAcknowledgement) {
+                $query->where('parser_tasks.task_type', '!=', 'acknowledge_roster_changes');
+            }
+
             if ($userId) {
                 $query->where('parser_tasks.user_id', $userId);
             }
             if ($excludedUsers) {
                 $query->whereNotIn('parser_tasks.user_id', $excludedUsers);
+            }
+            if ($excludedTaskIds) {
+                $query->whereNotIn('parser_tasks.id', $excludedTaskIds);
             }
 
             $task = $query->lockForUpdate()->first();
@@ -147,6 +169,19 @@ class ParserJobService
             if ($activeRuns >= $maxPerUser) {
                 $excludedUsers[] = $task->user_id;
                 continue;
+            }
+
+            if (in_array($task->task_type, ['roster_refresh', 'acknowledge_roster_changes'], true)) {
+                $hasConflictingPlanRun = SyncRun::query()
+                    ->where('user_id', $task->user_id)
+                    ->where('status', 'running')
+                    ->where('lock_expires_at', '>', $now)
+                    ->whereIn('task_type', ['roster_refresh', 'acknowledge_roster_changes'])
+                    ->exists();
+                if ($hasConflictingPlanRun) {
+                    $excludedTaskIds[] = $task->id;
+                    continue;
+                }
             }
 
             $taskPayload = $this->taskPayload($task);
@@ -197,6 +232,10 @@ class ParserJobService
                     $month->copy()->addMonth()->format('Y-m'),
                 ],
             ];
+        }
+
+        if ($task->task_type === 'acknowledge_roster_changes') {
+            return $task->payload;
         }
 
         if ($task->task_type !== 'flight_details') {

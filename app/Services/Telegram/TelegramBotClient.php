@@ -21,20 +21,37 @@ class TelegramBotClient
         $this->baseUrl = 'https://api.telegram.org/bot'.$token;
     }
 
-    public function sendMessage(int $chatId, string $text, array $options = []): void
+    public function sendMessage(int $chatId, string $text, array $options = []): array
     {
-        foreach ($this->splitText($text) as $chunk) {
+        $results = [];
+        $chunks = $this->splitText($text);
+        foreach ($chunks as $index => $chunk) {
+            $chunkOptions = $index === count($chunks) - 1 ? $options : [];
             $payload = array_filter(array_merge([
                 'chat_id' => $chatId,
                 'text' => $chunk,
                 'parse_mode' => 'HTML',
                 'disable_web_page_preview' => true,
-            ], $options), function ($value) {
+            ], $chunkOptions), function ($value) {
                 return $value !== null;
             });
 
-            $this->request('sendMessage', $payload);
+            $result = $this->request('sendMessage', $payload);
+            if ($result) {
+                $results[] = $result;
+            }
         }
+
+        return $results;
+    }
+
+    public function removeInlineKeyboard(int $chatId, int $messageId): void
+    {
+        $this->request('editMessageReplyMarkup', [
+            'chat_id' => $chatId,
+            'message_id' => $messageId,
+            'reply_markup' => ['inline_keyboard' => []],
+        ]);
     }
 
     public function answerCallbackQuery(string $callbackQueryId, ?string $text = null): void
@@ -48,7 +65,7 @@ class TelegramBotClient
         $this->request('answerCallbackQuery', $payload);
     }
 
-    private function request(string $method, array $payload): void
+    private function request(string $method, array $payload): ?array
     {
         try {
             $response = Http::asJson()
@@ -61,7 +78,7 @@ class TelegramBotClient
                 'message' => $exception->getMessage(),
             ]);
 
-            return;
+            return null;
         }
 
         $data = $response->json() ?: [];
@@ -74,13 +91,15 @@ class TelegramBotClient
                 'response' => $response->body(),
             ]);
 
-            return;
+            return null;
         }
 
         Log::info('Telegram API request sent', [
             'method' => $method,
             'chat_id' => $payload['chat_id'] ?? null,
         ]);
+
+        return is_array($data['result'] ?? null) ? $data['result'] : [];
     }
 
     private function splitText(string $text): array

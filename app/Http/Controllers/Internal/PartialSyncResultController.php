@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Internal\PartialSyncResultRequest;
 use App\Models\SyncRun;
 use App\Services\SyncResultService;
+use App\Models\RosterChangeEvent;
+use App\Services\Telegram\RosterChangeNotifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -57,6 +59,34 @@ class PartialSyncResultController extends Controller
 
         $result = $service->storePartial($syncRun, $payload);
 
+        if (config('services.telegram_bot.token')) {
+            $notifier = app(RosterChangeNotifier::class);
+            if (! empty($result['roster_change_event_id'])) {
+                $event = RosterChangeEvent::query()->find($result['roster_change_event_id']);
+                if ($event && ! $event->notified_at) {
+                    if (! $notifier->notifyPending($event)) {
+                        throw new \RuntimeException('Could not deliver the roster change notification.');
+                    }
+                }
+            }
+            if (! empty($result['acknowledged_event_id'])) {
+                $event = RosterChangeEvent::query()->find($result['acknowledged_event_id']);
+                if ($event) {
+                    $notifier->notifyAcknowledged($event);
+                }
+            }
+            if ($payload['chunk_kind'] === 'roster') {
+                RosterChangeEvent::query()
+                    ->where('user_id', $syncRun->user_id)
+                    ->where('source', $syncRun->source)
+                    ->where('status', 'acknowledged')
+                    ->whereNull('acknowledgement_notified_at')
+                    ->limit(10)
+                    ->get()
+                    ->each(fn (RosterChangeEvent $event) => $notifier->notifyAcknowledged($event));
+            }
+        }
+
         Log::info('Partial sync result stored', [
             'sync_run_id' => $syncRun->id,
             'chunk_kind' => $payload['chunk_kind'],
@@ -65,6 +95,7 @@ class PartialSyncResultController extends Controller
         ]);
 
         unset($result['duplicate']);
+        unset($result['roster_change_event_id'], $result['acknowledged_event_id']);
 
         return response()->json($result);
     }
