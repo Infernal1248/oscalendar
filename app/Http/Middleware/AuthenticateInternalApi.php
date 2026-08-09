@@ -42,13 +42,6 @@ class AuthenticateInternalApi
         $token->forceFill(['last_used_at' => now()])->save();
         $request->attributes->set('internal_api_token_id', $token->id);
 
-        Log::debug('Internal API authenticated', [
-            'path' => $request->path(),
-            'method' => $request->method(),
-            'token_id' => $token->id,
-            'token_name' => $token->name,
-        ]);
-
         return $next($request);
     }
 }

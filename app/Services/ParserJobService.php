@@ -8,7 +8,6 @@ use App\Models\SyncRun;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 class ParserJobService
 {
@@ -44,11 +43,6 @@ class ParserJobService
                 $supportsRosterAcknowledgement
             );
             if (! $claimed) {
-                Log::debug('Parser job service found no due task', [
-                    'source' => $source,
-                    'portal' => $portal,
-                    'user_id' => $userId,
-                ]);
                 return null;
             }
 

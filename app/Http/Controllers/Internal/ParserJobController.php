@@ -24,24 +24,9 @@ class ParserJobController extends Controller
             'capabilities.*' => ['string', Rule::in(['typed_tasks_v1', 'roster_acknowledgement_v1'])],
         ]);
 
-        Log::debug('Parser job claim requested', [
-            'source' => $data['source'] ?? 'rossiya_edu',
-            'portal' => $data['portal'] ?? ($data['source'] ?? 'rossiya_edu'),
-            'locked_by' => $data['locked_by'] ?? null,
-            'lock_seconds' => $data['lock_seconds'] ?? null,
-            'user_id' => $data['user_id'] ?? null,
-            'capabilities' => $data['capabilities'],
-        ]);
-
         $job = $service->claim($data);
 
         if (! $job) {
-            Log::debug('Parser job claim returned no job', [
-                'source' => $data['source'] ?? 'rossiya_edu',
-                'portal' => $data['portal'] ?? ($data['source'] ?? 'rossiya_edu'),
-                'user_id' => $data['user_id'] ?? null,
-            ]);
-
             return response()->json([
                 'ok' => true,
                 'job' => null,
