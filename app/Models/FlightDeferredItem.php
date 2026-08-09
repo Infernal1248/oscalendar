@@ -13,12 +13,17 @@ class FlightDeferredItem extends Model
         'title',
         'ata',
         'work_order',
+        'issued_at',
         'due_at',
+        'mel',
+        'tah',
+        'tac',
         'is_warning',
         'raw_data',
     ];
 
     protected $casts = [
+        'issued_at' => 'datetime',
         'due_at' => 'datetime',
         'is_warning' => 'boolean',
         'raw_data' => 'array',

@@ -77,8 +77,28 @@ class PartialSyncResultTest extends TestCase
                 'source_para_id' => 'para-1',
                 'flight_number' => 'FV123',
                 'starts_at' => '2026-08-04T10:00:00Z',
-                'crew' => [['full_name' => 'Test Person']],
-                'deferred_items' => [['title' => 'Test deferred item']],
+                'crew' => [[
+                    'role' => 'КВС',
+                    'full_name' => 'Test Person',
+                    'personnel_number' => '124312',
+                    'crew_group' => 'flight',
+                    'department' => 'Flight crew',
+                    'position' => 'Captain',
+                    'qualification' => '+',
+                    'seniority' => '10',
+                    'training_notes' => 'Training note',
+                    'phones' => ['+79990000000'],
+                    'source_payload' => ['sources' => ['workplan', 'ops']],
+                ]],
+                'deferred_items' => [[
+                    'title' => 'Test deferred item',
+                    'work_order' => 'WO1',
+                    'issued_at' => '2026-08-01T00:00:00Z',
+                    'due_at' => '2026-12-01T00:00:00Z',
+                    'mel' => 'D 25-43-00',
+                    'tah' => '13988',
+                    'tac' => '7569',
+                ]],
             ]],
         ]);
 
@@ -100,6 +120,10 @@ class PartialSyncResultTest extends TestCase
         $this->assertNotNull($segment->roster_item_id);
         $this->assertSame(1, $segment->crewMembers()->count());
         $this->assertSame(1, $segment->deferredItems()->count());
+        $this->assertSame('124312', $segment->crewMembers()->first()->personnel_number);
+        $this->assertSame(['+79990000000'], $segment->crewMembers()->first()->phones);
+        $this->assertSame('D 25-43-00', $segment->deferredItems()->first()->mel);
+        $this->assertSame('13988', $segment->deferredItems()->first()->tah);
 
         $this->withToken($this->token)
             ->postJson('/api/internal/sync-runs/'.$syncRun->id.'/finish', [

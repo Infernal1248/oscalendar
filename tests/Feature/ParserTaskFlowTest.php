@@ -210,6 +210,67 @@ class ParserTaskFlowTest extends TestCase
             && str_contains((string) $request['text'], 'Актуальная задача'));
     }
 
+    public function test_admin_approves_pending_user_with_inline_button(): void
+    {
+        config(['services.telegram_bot.token' => 'test-bot-token']);
+        Http::fake(fn () => Http::response([
+            'ok' => true,
+            'result' => ['message_id' => 501],
+        ]));
+
+        $admin = User::query()->create(['display_name' => 'Admin', 'status' => 'active']);
+        TelegramAccount::query()->create([
+            'user_id' => $admin->id,
+            'telegram_id' => 100001,
+            'is_admin' => true,
+        ]);
+        $pendingUser = User::query()->create(['display_name' => 'Ромарио', 'status' => 'pending']);
+        $pendingAccount = TelegramAccount::query()->create([
+            'user_id' => $pendingUser->id,
+            'telegram_id' => 511700424,
+        ]);
+        PortalCredential::query()->create([
+            'user_id' => $pendingUser->id,
+            'portal' => 'rossiya_edu',
+            'login' => '124312',
+            'password_encrypted' => Crypt::encryptString('portal-password'),
+            'status' => 'active',
+        ]);
+
+        app(TelegramBotService::class)->handle(['message' => [
+            'chat' => ['id' => 100001],
+            'from' => ['id' => 100001],
+            'text' => '/pending',
+        ]]);
+
+        Http::assertSent(fn ($request) => str_ends_with($request->url(), '/sendMessage')
+            && $request['chat_id'] === 100001
+            && str_contains((string) $request['text'], 'Табельный номер: <code>124312</code>')
+            && ! str_contains((string) $request['text'], 'Telegram ID')
+            && ($request['reply_markup']['inline_keyboard'][0][0] ?? null) === [
+                'text' => 'Одобрить',
+                'callback_data' => 'admin.approve:'.$pendingAccount->id,
+            ]);
+
+        app(TelegramBotService::class)->handle(['callback_query' => [
+            'id' => 'approve-callback',
+            'from' => ['id' => 100001],
+            'message' => [
+                'message_id' => 501,
+                'chat' => ['id' => 100001],
+            ],
+            'data' => 'admin.approve:'.$pendingAccount->id,
+        ]]);
+
+        $this->assertSame('active', $pendingUser->fresh()->status);
+        Http::assertSent(fn ($request) => str_ends_with($request->url(), '/editMessageReplyMarkup')
+            && $request['chat_id'] === 100001
+            && $request['message_id'] === 501);
+        Http::assertSent(fn ($request) => str_ends_with($request->url(), '/sendMessage')
+            && $request['chat_id'] === 511700424
+            && str_contains((string) $request['text'], 'Доступ одобрен'));
+    }
+
     private function sendRosterChunk(array $job, User $user, array $item, array $changeState): void
     {
         $this->withToken($this->token)

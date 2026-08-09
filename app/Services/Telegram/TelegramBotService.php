@@ -300,6 +300,47 @@ class TelegramBotService
             return;
         }
 
+        if (preg_match('/^admin\.approve:(\d+)$/', $data, $matches)) {
+            if (! $this->isAdmin($account)) {
+                $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Недостаточно прав.');
+                return;
+            }
+
+            $pendingAccount = TelegramAccount::query()
+                ->whereKey((int) $matches[1])
+                ->with('user')
+                ->first();
+            if (! $pendingAccount || ! $pendingAccount->user) {
+                $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Заявка уже обработана.');
+                return;
+            }
+
+            $activated = User::query()
+                ->whereKey($pendingAccount->user_id)
+                ->where('status', 'pending')
+                ->update(['status' => 'active']);
+            if ($activated === 0) {
+                $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Заявка уже обработана.');
+                return;
+            }
+
+            $pendingAccount->user->refresh();
+            if (! empty($callback['message']['message_id'])) {
+                $this->client->removeInlineKeyboard($chatId, (int) $callback['message']['message_id']);
+            }
+            $personnelNumber = $this->portalLogin($pendingAccount->user);
+            $this->client->answerCallbackQuery(
+                (string) ($callback['id'] ?? ''),
+                'Пользователь '.($personnelNumber ?: $pendingAccount->user->display_name).' одобрен.'
+            );
+            $this->client->sendMessage(
+                (int) $pendingAccount->telegram_id,
+                'Доступ одобрен. Можно пользоваться меню.',
+                ['reply_markup' => $this->mainKeyboard($pendingAccount)]
+            );
+            return;
+        }
+
         if (preg_match('/^roster\.ack:(\d+)$/', $data, $matches)) {
             $event = RosterChangeEvent::query()
                 ->whereKey((int) $matches[1])
@@ -463,17 +504,9 @@ class TelegramBotService
             return;
         }
 
-        $lines = ['Заявки на доступ:'];
         foreach ($accounts as $account) {
-            $lines[] = sprintf(
-                "%s, tg_id: <code>%s</code>\nОдобрить: <code>/approve %s</code>",
-                $this->e($account->user->display_name ?: 'Без имени'),
-                $account->telegram_id,
-                $account->telegram_id
-            );
+            $this->sendPendingApprovalRequest($chatId, $account);
         }
-
-        $this->client->sendMessage($chatId, implode("\n\n", $lines));
     }
 
     private function notifyAdminsAboutPendingUser(TelegramAccount $pendingAccount): void
@@ -486,13 +519,29 @@ class TelegramBotService
             ->get();
 
         foreach ($admins as $admin) {
-            $this->client->sendMessage((int) $admin->telegram_id, sprintf(
-                "Новая заявка на доступ:\n%s\nTelegram ID: <code>%s</code>\n\nОдобрить: <code>/approve %s</code>",
-                $this->e($pendingAccount->user->display_name ?: 'Без имени'),
-                $pendingAccount->telegram_id,
-                $pendingAccount->telegram_id
-            ));
+            $this->sendPendingApprovalRequest((int) $admin->telegram_id, $pendingAccount);
         }
+    }
+
+    private function sendPendingApprovalRequest(int $chatId, TelegramAccount $pendingAccount): void
+    {
+        $personnelNumber = $this->portalLogin($pendingAccount->user);
+        $this->client->sendMessage(
+            $chatId,
+            sprintf(
+                "Новая заявка на доступ:\n%s\nТабельный номер: <code>%s</code>",
+                $this->e($pendingAccount->user->display_name ?: 'Без имени'),
+                $this->e($personnelNumber ?: 'не указан')
+            ),
+            [
+                'reply_markup' => [
+                    'inline_keyboard' => [[[
+                        'text' => 'Одобрить',
+                        'callback_data' => 'admin.approve:'.$pendingAccount->id,
+                    ]]],
+                ],
+            ]
+        );
     }
 
     private function sendHelp(int $chatId, TelegramAccount $account): void

@@ -224,6 +224,14 @@ class SyncResultService
                     'role' => $crewPayload['role'] ?? null,
                     'full_name' => $crewPayload['full_name'],
                     'phones' => $crewPayload['phones'] ?? [],
+                    'personnel_number' => $crewPayload['personnel_number'] ?? null,
+                    'crew_group' => $crewPayload['crew_group'] ?? null,
+                    'department' => $crewPayload['department'] ?? null,
+                    'position' => $crewPayload['position'] ?? null,
+                    'qualification' => $crewPayload['qualification'] ?? null,
+                    'seniority' => $crewPayload['seniority'] ?? null,
+                    'training_notes' => $crewPayload['training_notes'] ?? null,
+                    'source_payload' => $crewPayload['source_payload'] ?? [],
                 ]);
             }
 
@@ -234,7 +242,11 @@ class SyncResultService
                     'title' => $deferredPayload['title'] ?? null,
                     'ata' => $deferredPayload['ata'] ?? null,
                     'work_order' => $deferredPayload['work_order'] ?? null,
+                    'issued_at' => $this->dateTime($deferredPayload['issued_at'] ?? null),
                     'due_at' => $this->dateTime($deferredPayload['due_at'] ?? null),
+                    'mel' => $deferredPayload['mel'] ?? null,
+                    'tah' => $deferredPayload['tah'] ?? null,
+                    'tac' => $deferredPayload['tac'] ?? null,
                     'is_warning' => (bool) ($deferredPayload['is_warning'] ?? false),
                     'raw_data' => $deferredPayload['raw_data'] ?? [],
                 ]);

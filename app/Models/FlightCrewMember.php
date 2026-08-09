@@ -12,10 +12,19 @@ class FlightCrewMember extends Model
         'role',
         'full_name',
         'phones',
+        'personnel_number',
+        'crew_group',
+        'department',
+        'position',
+        'qualification',
+        'seniority',
+        'training_notes',
+        'source_payload',
     ];
 
     protected $casts = [
         'phones' => 'array',
+        'source_payload' => 'array',
     ];
 
     protected $hidden = [
