@@ -44,7 +44,7 @@ class ParserJobService
                 $supportsRosterAcknowledgement
             );
             if (! $claimed) {
-                Log::info('Parser job service found no due task', [
+                Log::debug('Parser job service found no due task', [
                     'source' => $source,
                     'portal' => $portal,
                     'user_id' => $userId,
