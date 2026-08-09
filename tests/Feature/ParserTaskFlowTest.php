@@ -84,7 +84,6 @@ class ParserTaskFlowTest extends TestCase
                     'kind' => 'flight',
                     'title' => 'FV100',
                     'starts_at' => now()->addHours(12)->toIso8601String(),
-                    'ends_at' => now()->addHours(14)->toIso8601String(),
                     'is_actual' => true,
                 ]],
                 'flight_segments' => [],
@@ -101,6 +100,7 @@ class ParserTaskFlowTest extends TestCase
         $detailJob = $this->claim()->assertOk()->json('job');
         $this->assertSame('flight_details', $detailJob['task_type']);
         $this->assertSame('flight-100', $detailJob['task_payload']['source_external_id']);
+        $this->assertNull($detailJob['task_payload']['ends_at']);
         $this->assertSame(2, ParserTask::query()->count());
     }
 

@@ -286,7 +286,9 @@ class SyncResultService
     {
         return [
             'source_external_id' => $item->source_external_id,
-            'starts_at' => optional($item->starts_at)->utc()->toIso8601String(),
+            'starts_at' => $item->starts_at
+                ? $item->starts_at->copy()->utc()->toIso8601String()
+                : null,
             'flight_numbers_raw' => $item->flight_numbers_raw,
             'aircraft_type_raw' => $item->aircraft_type_raw,
             'boards_raw' => $item->boards_raw,

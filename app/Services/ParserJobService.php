@@ -252,10 +252,15 @@ class ParserJobService
             'source_external_id' => $item->source_external_id,
             'source_request_raw' => $item->source_request_raw,
             'boards_raw' => $item->boards_raw,
-            'starts_at' => optional($item->starts_at)->utc()->toIso8601String(),
-            'ends_at' => optional($item->ends_at)->utc()->toIso8601String(),
-            'roster_updated_at' => optional($item->updated_at)->utc()->toIso8601String(),
+            'starts_at' => $this->isoDateTime($item->starts_at),
+            'ends_at' => $this->isoDateTime($item->ends_at),
+            'roster_updated_at' => $this->isoDateTime($item->updated_at),
         ];
+    }
+
+    private function isoDateTime($value): ?string
+    {
+        return $value ? $value->copy()->utc()->toIso8601String() : null;
     }
 
     private function releaseExpiredTasks(string $source, Carbon $now): void
