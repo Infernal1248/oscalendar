@@ -3,6 +3,7 @@
 namespace App\Services\Telegram;
 
 use App\Models\CalendarFeed;
+use App\Models\FlightDeferredItem;
 use App\Models\FlightSegment;
 use App\Models\PortalCredential;
 use App\Models\RosterItem;
@@ -377,6 +378,11 @@ class TelegramBotService
 
         if (preg_match('/^details\.flight:(\d+)$/', $data, $matches)) {
             $this->sendFlightDetails($chatId, $account, (int) $matches[1]);
+            return;
+        }
+
+        if (preg_match('/^deferred\.(mel|defects):(\d+)$/', $data, $matches)) {
+            $this->sendDeferredDetails($chatId, $account, (int) $matches[2], $matches[1]);
         }
     }
 
@@ -446,8 +452,9 @@ class TelegramBotService
             return;
         }
 
+        $keyboard = $this->flightDeferredKeyboard($segment);
         $this->client->sendMessage($chatId, $this->formatFlightSegment($segment), [
-            'reply_markup' => $this->mainKeyboard($account),
+            'reply_markup' => $keyboard ?: $this->mainKeyboard($account),
         ]);
     }
 
@@ -466,8 +473,46 @@ class TelegramBotService
         }
 
         foreach ($segments as $segment) {
-            $this->client->sendMessage($chatId, $this->formatFlightSegment($segment));
+            $this->client->sendMessage($chatId, $this->formatFlightSegment($segment), [
+                'reply_markup' => $this->flightDeferredKeyboard($segment),
+            ]);
         }
+    }
+
+    private function sendDeferredDetails(
+        int $chatId,
+        TelegramAccount $account,
+        int $flightSegmentId,
+        string $group
+    ): void
+    {
+        $segment = FlightSegment::query()
+            ->whereKey($flightSegmentId)
+            ->where('user_id', $account->user_id)
+            ->with('deferredItems')
+            ->first();
+
+        if (! $segment) {
+            $this->client->sendMessage($chatId, 'Данные рейса не найдены.');
+            return;
+        }
+
+        $items = $this->deferredItemsForGroup($segment, $group);
+        if ($items->isEmpty()) {
+            $this->client->sendMessage($chatId, 'Записей этого типа для рейса нет.');
+            return;
+        }
+
+        $lines = [
+            '<b>'.$this->deferredGroupTitle($group).' — рейс '.$this->e($segment->flight_number ?: 'без номера').'</b>',
+        ];
+
+        foreach ($items->values() as $index => $item) {
+            $lines[] = '';
+            $lines = array_merge($lines, $this->formatDeferredItem($item, $index + 1));
+        }
+
+        $this->client->sendMessage($chatId, implode("\n", $lines));
     }
 
     private function sendCalendarLink(int $chatId, TelegramAccount $account): void
@@ -597,18 +642,122 @@ class TelegramBotService
             }
         }
 
-        if ($segment->deferredItems->isNotEmpty()) {
-            $lines[] = "\n<b>Неисправности:</b>";
-            foreach ($segment->deferredItems as $item) {
-                $line = $item->title ?: $item->group_name;
-                if ($item->is_warning) {
-                    $line .= ' !!!';
+        foreach (['mel', 'defects'] as $group) {
+            $warnings = $this->deferredItemsForGroup($segment, $group)
+                ->where('is_warning', true)
+                ->values();
+
+            if ($warnings->isEmpty()) {
+                continue;
+            }
+
+            $lines[] = "\n<b>⚠️ ".$this->deferredGroupTitle($group).':</b>';
+            foreach ($warnings as $index => $item) {
+                $lines[] = ($index + 1).') '.$this->e($item->title ?: 'Без описания');
+                if ($item->work_order) {
+                    $lines[] = 'W/O: '.$this->e($item->work_order);
                 }
-                $lines[] = $this->e($line ?: 'Без описания');
+                if ($date = $this->deferredDate($item)) {
+                    $lines[] = 'Date: '.$this->e($date);
+                }
             }
         }
 
         return implode("\n", $lines);
+    }
+
+    private function flightDeferredKeyboard(FlightSegment $segment): ?array
+    {
+        $rows = [];
+        $melCount = $this->deferredItemsForGroup($segment, 'mel')->count();
+        $defectsCount = $this->deferredItemsForGroup($segment, 'defects')->count();
+
+        if ($melCount > 0) {
+            $rows[] = [[
+                'text' => 'Все MEL ('.$melCount.')',
+                'callback_data' => 'deferred.mel:'.$segment->id,
+            ]];
+        }
+        if ($defectsCount > 0) {
+            $rows[] = [[
+                'text' => 'Все DEFERRED DEFECTS ('.$defectsCount.')',
+                'callback_data' => 'deferred.defects:'.$segment->id,
+            ]];
+        }
+
+        return $rows === [] ? null : ['inline_keyboard' => $rows];
+    }
+
+    private function deferredItemsForGroup(FlightSegment $segment, string $group)
+    {
+        return $segment->deferredItems->filter(function (FlightDeferredItem $item) use ($group) {
+            $name = mb_strtoupper((string) $item->group_name);
+
+            return $group === 'mel'
+                ? str_contains($name, 'MEL')
+                : str_contains($name, 'DEFECT');
+        });
+    }
+
+    private function deferredGroupTitle(string $group): string
+    {
+        return $group === 'mel' ? 'DEFERRED ITEMS ACCORDING MEL' : 'DEFERRED DEFECTS';
+    }
+
+    private function formatDeferredItem(FlightDeferredItem $item, int $number): array
+    {
+        $lines = [
+            '<b>'.$number.'. '.$this->e($item->title ?: 'Без описания').'</b>',
+        ];
+
+        if ($item->is_warning) {
+            $lines[] = '⚠️ Требует внимания';
+        }
+
+        $fields = [
+            'W/O' => $item->work_order,
+            'Date' => $this->deferredDate($item),
+            'MEL' => $item->mel,
+            'ATA' => $item->ata,
+            'TAH' => $item->tah,
+            'TAC' => $item->tac,
+        ];
+
+        foreach ($fields as $label => $value) {
+            if ($value !== null && $value !== '') {
+                $lines[] = $label.': '.$this->e((string) $value);
+            }
+        }
+
+        $knownFields = ['WO', 'WORKORDER', 'DATE', 'MEL', 'ATA', 'DESCRIPTION', 'DEFECT', 'TAH', 'TAC'];
+        foreach ($item->raw_data ?? [] as $label => $value) {
+            $normalizedLabel = mb_strtoupper(preg_replace('/[^\pL\pN]/u', '', (string) $label));
+            if (in_array($normalizedLabel, $knownFields, true) || $value === null || $value === '') {
+                continue;
+            }
+            $lines[] = $this->e((string) $label).': '.$this->e(is_scalar($value) ? (string) $value : json_encode($value, JSON_UNESCAPED_UNICODE));
+        }
+
+        return $lines;
+    }
+
+    private function deferredDate(FlightDeferredItem $item): ?string
+    {
+        foreach ($item->raw_data ?? [] as $label => $value) {
+            if (mb_strtoupper(trim((string) $label)) === 'DATE' && $value !== null && $value !== '') {
+                return (string) $value;
+            }
+        }
+
+        $parts = [];
+        if ($item->issued_at) {
+            $parts[] = 'Iss: '.$item->issued_at->utc()->format('d.m.Y');
+        }
+        if ($item->due_at) {
+            $parts[] = 'Due: '.$item->due_at->utc()->format('d.m.Y');
+        }
+
+        return $parts === [] ? null : implode(' ', $parts);
     }
 
     private function mainKeyboard(TelegramAccount $account): array
