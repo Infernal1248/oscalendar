@@ -656,6 +656,9 @@ class TelegramBotService
 
             $lines[] = "\n<b>⚠️ ".$this->deferredGroupTitle($group).':</b>';
             foreach ($warnings as $index => $item) {
+                if ($index > 0) {
+                    $lines[] = '';
+                }
                 $lines[] = ($index + 1).') '.$this->e($item->title ?: 'Без описания');
                 if ($item->work_order) {
                     $lines[] = 'W/O: '.$this->e($item->work_order);
