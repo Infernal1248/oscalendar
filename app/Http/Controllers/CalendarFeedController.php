@@ -102,32 +102,20 @@ class CalendarFeedController extends Controller
     private function flightSegmentEvent(FlightSegment $segment, CalendarFeed $feed): array
     {
         $summary = trim(implode(' ', array_filter([
-            $segment->flight_number ? 'Рейс '.$segment->flight_number : 'Рейс',
+            $segment->flight_number,
             $segment->route_raw,
         ])));
 
-        $description = array_filter([
-            $segment->aircraft_type ? 'Тип ВС: '.$segment->aircraft_type : null,
-            $segment->board ? 'Борт: '.$segment->board : null,
-            $segment->purpose ? 'Цель: '.$segment->purpose : null,
-            $segment->parking_minutes !== null ? 'Стоянка: '.$this->parking((int) $segment->parking_minutes) : null,
-            $segment->dep_stand ? 'Стоянка вылета: '.$segment->dep_stand : null,
-            $segment->arr_stand ? 'Стоянка прилёта: '.$segment->arr_stand : null,
-            $segment->open_doc_url ? 'Задание: '.$segment->open_doc_url : null,
-            $segment->download_doc_url ? 'Скачать задание: '.$segment->download_doc_url : null,
-        ]);
+        $description = [];
 
-        if ($feed->include_crew && $segment->crewMembers->isNotEmpty()) {
-            $description[] = '';
+        if ($segment->crewMembers->isNotEmpty()) {
             $description[] = 'Экипаж:';
-            foreach ($segment->crewMembers as $crew) {
-                $line = trim(($crew->role ? $crew->role.' ' : '').$crew->full_name);
+            foreach ($segment->crewMembers->values() as $index => $crew) {
+                $description[] = ($index + 1).') '.trim(($crew->role ? $crew->role.' ' : '').$crew->full_name);
 
-                if ($feed->include_phones && $crew->phones) {
-                    $line .= ' '.implode(', ', $crew->phones);
+                foreach ($crew->phones ?? [] as $phone) {
+                    $description[] = $phone;
                 }
-
-                $description[] = $line;
             }
         }
 
@@ -153,11 +141,14 @@ class CalendarFeedController extends Controller
 
     private function rosterItemEvent(RosterItem $item): array
     {
+        $summary = $item->kind === 'flight_ring'
+            ? trim(implode(' ', array_filter([$item->flight_numbers_raw, $item->route_raw])))
+            : trim((string) $item->flight_numbers_raw);
+
         return $this->event([
             'uid' => 'roster-item-'.$item->id.'@oscalendar',
-            'summary' => $item->title ?: $item->kind ?: 'План',
+            'summary' => $summary ?: ($item->title ?: $item->kind ?: 'План'),
             'description' => implode("\n", array_filter([
-                $item->flight_numbers_raw ? 'Рейс: '.$item->flight_numbers_raw : null,
                 $item->route_raw ? 'Маршрут: '.$item->route_raw : null,
                 $item->aircraft_type_raw ? 'Тип ВС: '.$item->aircraft_type_raw : null,
                 $item->boards_raw ? 'Борт: '.$item->boards_raw : null,
@@ -227,14 +218,5 @@ class CalendarFeedController extends Controller
         }
 
         return $result.$line;
-    }
-
-    private function parking(int $minutes): string
-    {
-        if ($minutes < 60) {
-            return $minutes.' мин.';
-        }
-
-        return intdiv($minutes, 60).' ч. '.($minutes % 60).' мин.';
     }
 }
