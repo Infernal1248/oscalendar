@@ -639,6 +639,9 @@ class TelegramBotService
             $lines[] = "\n<b>Экипаж:</b>";
             foreach ($segment->crewMembers as $index => $crew) {
                 $lines[] = ($index + 1).') '.$this->e(trim(($crew->role ?: '').' '.$crew->full_name));
+                foreach ($crew->phones ?? [] as $phone) {
+                    $lines[] = $this->e($phone);
+                }
             }
         }
 

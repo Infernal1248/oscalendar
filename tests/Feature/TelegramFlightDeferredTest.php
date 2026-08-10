@@ -47,6 +47,11 @@ class TelegramFlightDeferredTest extends TestCase
     {
         [$account, $segment] = $this->flightForTelegramUser(123456);
 
+        $segment->crewMembers()->create([
+            'role' => 'КВС',
+            'full_name' => 'Фраиндт Роман Александрович',
+            'phones' => ['+79690290525', '+79999667434'],
+        ]);
         $segment->deferredItems()->create([
             'group_name' => 'DEFERRED ITEMS ACCORDING MEL',
             'title' => 'Warning MEL item',
@@ -88,6 +93,7 @@ class TelegramFlightDeferredTest extends TestCase
         ]]);
 
         Http::assertSent(fn ($request) => str_ends_with($request->url(), '/sendMessage')
+            && str_contains((string) $request['text'], "1) КВС Фраиндт Роман Александрович\n+79690290525\n+79999667434")
             && str_contains((string) $request['text'], '⚠️ DEFERRED ITEMS ACCORDING MEL')
             && str_contains((string) $request['text'], 'Warning MEL item')
             && str_contains((string) $request['text'], 'W/O: 517962341')
