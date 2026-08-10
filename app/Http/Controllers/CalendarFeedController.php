@@ -106,9 +106,14 @@ class CalendarFeedController extends Controller
             $segment->route_raw,
         ])));
 
-        $description = [];
+        $description = array_filter([
+            $segment->board ? 'Борт: '.$segment->board : null,
+        ]);
 
         if ($segment->crewMembers->isNotEmpty()) {
+            if ($description !== []) {
+                $description[] = '';
+            }
             $description[] = 'Экипаж:';
             foreach ($segment->crewMembers->values() as $index => $crew) {
                 $description[] = ($index + 1).') '.trim(($crew->role ? $crew->role.' ' : '').$crew->full_name);

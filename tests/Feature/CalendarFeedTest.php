@@ -104,7 +104,7 @@ class CalendarFeedTest extends TestCase
 
         $this->assertStringContainsString("SUMMARY:ОФИС\r\n", $unfolded);
         $this->assertStringContainsString("SUMMARY:ФВ6363 ШЕРЕМЕТ - ТЮМЕНЬ\r\n", $unfolded);
-        $this->assertStringContainsString('DESCRIPTION:Экипаж:\\n1) КВС Фраиндт Роман Александрович\\n+79690290525\\n+79999667434\\n2) ВП Елисеев Илья Викторович\\n+79175733818', $unfolded);
+        $this->assertStringContainsString('DESCRIPTION:Борт: 89100\\n\\nЭкипаж:\\n1) КВС Фраиндт Роман Александрович\\n+79690290525\\n+79999667434\\n2) ВП Елисеев Илья Викторович\\n+79175733818', $unfolded);
         $this->assertStringNotContainsString('Рейс ФВ6363', $unfolded);
         $this->assertStringNotContainsString('Тип ВС:', $unfolded);
         $this->assertStringNotContainsString('Цель:', $unfolded);
