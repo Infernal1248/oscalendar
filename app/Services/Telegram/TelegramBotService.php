@@ -442,6 +442,7 @@ class TelegramBotService
     {
         $segment = FlightSegment::query()
             ->where('user_id', $account->user_id)
+            ->withActualRosterItem()
             ->where('starts_at', '>=', now())
             ->with(['crewMembers', 'deferredItems'])
             ->orderBy('starts_at')
@@ -462,6 +463,7 @@ class TelegramBotService
     {
         $segments = FlightSegment::query()
             ->where('user_id', $account->user_id)
+            ->withActualRosterItem()
             ->where('roster_item_id', $rosterItemId)
             ->with(['crewMembers', 'deferredItems'])
             ->orderBy('starts_at')
@@ -489,6 +491,7 @@ class TelegramBotService
         $segment = FlightSegment::query()
             ->whereKey($flightSegmentId)
             ->where('user_id', $account->user_id)
+            ->withActualRosterItem()
             ->with('deferredItems')
             ->first();
 

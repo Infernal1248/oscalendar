@@ -48,11 +48,7 @@ class ParserTaskScheduler
 
     public function scheduleFlightDetails(RosterItem $item, bool $force = false): ?ParserTask
     {
-        $eligible = $item->is_actual
-            && ! $item->is_removed_from_source
-            && $item->source_external_id
-            && $item->source_request_raw
-            && $item->starts_at;
+        $eligible = $this->isFlightEligible($item);
         $taskKey = $this->flightTaskKey($item);
         $task = ParserTask::query()->where('task_key', $taskKey)->first();
 
@@ -169,11 +165,11 @@ class ParserTaskScheduler
                 );
             } elseif ($task->task_type === 'flight_details') {
                 $item = $task->rosterItem()->first();
-                [$priority, $nextRunAt] = $item
+                [$priority, $nextRunAt] = $this->isFlightEligible($item)
                     ? $this->flightSchedule($item, $finishedAt)
                     : [0, null];
                 $attributes['priority'] = $priority;
-                if ($task->refresh_requested) {
+                if ($nextRunAt && $task->refresh_requested) {
                     $nextRunAt = $finishedAt;
                 } elseif ($nextRunAt) {
                     $intervalSeconds = (int) $finishedAt->diffInSeconds($nextRunAt);
@@ -191,11 +187,8 @@ class ParserTaskScheduler
             $attributes['last_error_at'] = $finishedAt;
             $attributes['last_error_text'] = $syncRun->error_text;
             $item = $task->task_type === 'flight_details' ? $task->rosterItem()->first() : null;
-            $isNoLongerEligible = $item && (
-                ! $item->is_actual
-                || $item->is_removed_from_source
-                || $this->flightSchedule($item, $finishedAt)[1] === null
-            );
+            $isNoLongerEligible = $task->task_type === 'flight_details'
+                && (! $this->isFlightEligible($item) || $this->flightSchedule($item, $finishedAt)[1] === null);
             $attributes['status'] = $isNoLongerEligible ? 'completed' : 'scheduled';
             $attributes['next_run_at'] = $isNoLongerEligible
                 ? null
@@ -249,6 +242,16 @@ class ParserTaskScheduler
     private function flightTaskKey(RosterItem $item): string
     {
         return "flight_details:{$item->source}:roster:{$item->id}";
+    }
+
+    private function isFlightEligible(?RosterItem $item): bool
+    {
+        return $item
+            && $item->is_actual
+            && ! $item->is_removed_from_source
+            && $item->source_external_id
+            && $item->source_request_raw
+            && $item->starts_at;
     }
 
     private function nextFromTaskStart(ParserTask $task, Carbon $finishedAt, int $intervalSeconds): Carbon

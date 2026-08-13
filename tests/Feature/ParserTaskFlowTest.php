@@ -6,6 +6,8 @@ use App\Models\InternalApiToken;
 use App\Models\ParserTask;
 use App\Models\PortalCredential;
 use App\Models\RosterChangeEvent;
+use App\Models\RosterItem;
+use App\Models\SyncRun;
 use App\Models\TelegramAccount;
 use App\Models\User;
 use App\Services\Telegram\TelegramBotService;
@@ -102,6 +104,51 @@ class ParserTaskFlowTest extends TestCase
         $this->assertSame('flight-100', $detailJob['task_payload']['source_external_id']);
         $this->assertNull($detailJob['task_payload']['ends_at']);
         $this->assertSame(2, ParserTask::query()->count());
+    }
+
+    public function test_running_flight_task_completes_when_roster_item_was_cancelled(): void
+    {
+        Carbon::setTestNow('2026-08-13 12:00:00');
+        $user = User::query()->create(['display_name' => 'Cancelled Flight User']);
+        $item = RosterItem::query()->create([
+            'user_id' => $user->id,
+            'source_external_id' => '1660764',
+            'source_request_raw' => '1660764,2026-08-21 12:00:00.000,1',
+            'kind' => 'flight_ring',
+            'starts_at' => '2026-08-21 09:00:00',
+            'is_actual' => false,
+            'is_removed_from_source' => true,
+        ]);
+        $task = ParserTask::query()->create([
+            'task_key' => 'flight_details:rossiya_edu:roster:'.$item->id,
+            'user_id' => $user->id,
+            'roster_item_id' => $item->id,
+            'source' => 'rossiya_edu',
+            'portal' => 'rossiya_edu',
+            'task_type' => 'flight_details',
+            'status' => 'running',
+            'priority' => 20,
+            'next_run_at' => now(),
+            'refresh_requested' => true,
+        ]);
+        $syncRun = SyncRun::query()->create([
+            'user_id' => $user->id,
+            'parser_task_id' => $task->id,
+            'roster_item_id' => $item->id,
+            'source' => 'rossiya_edu',
+            'task_type' => 'flight_details',
+            'trigger' => 'scheduler',
+            'status' => 'finished',
+            'started_at' => now()->subMinute(),
+            'finished_at' => now(),
+        ]);
+
+        app(\App\Services\ParserTaskScheduler::class)->completeTask($syncRun);
+
+        $task->refresh();
+        $this->assertSame('completed', $task->status);
+        $this->assertNull($task->next_run_at);
+        $this->assertFalse($task->refresh_requested);
     }
 
     public function test_roster_change_notifies_and_acknowledgement_returns_current_task(): void

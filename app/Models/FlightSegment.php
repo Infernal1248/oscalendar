@@ -60,4 +60,12 @@ class FlightSegment extends Model
     {
         return $this->hasMany(FlightDeferredItem::class);
     }
+
+    public function scopeWithActualRosterItem($query)
+    {
+        return $query->whereHas('rosterItem', function ($query) {
+            $query->where('is_actual', true)
+                ->where('is_removed_from_source', false);
+        });
+    }
 }

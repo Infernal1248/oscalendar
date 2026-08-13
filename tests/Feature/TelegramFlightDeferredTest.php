@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\FlightSegment;
+use App\Models\RosterItem;
 use App\Models\TelegramAccount;
 use App\Models\User;
 use App\Services\Telegram\TelegramBotService;
@@ -168,8 +169,17 @@ class TelegramFlightDeferredTest extends TestCase
             'user_id' => $user->id,
             'telegram_id' => $telegramId,
         ]);
+        $rosterItem = RosterItem::query()->create([
+            'user_id' => $user->id,
+            'source_external_id' => 'roster-'.$telegramId,
+            'kind' => 'flight_ring',
+            'starts_at' => '2026-08-12 08:15:00',
+            'is_actual' => true,
+            'is_removed_from_source' => false,
+        ]);
         $segment = FlightSegment::query()->create([
             'user_id' => $user->id,
+            'roster_item_id' => $rosterItem->id,
             'source_para_id' => 'para-'.$telegramId,
             'flight_number' => 'ФВ6363',
             'route_raw' => 'ШЕРЕМЕТ - ТЮМЕНЬ',

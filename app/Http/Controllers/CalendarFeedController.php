@@ -77,6 +77,7 @@ class CalendarFeedController extends Controller
     {
         return FlightSegment::query()
             ->where('user_id', $feed->user_id)
+            ->withActualRosterItem()
             ->whereBetween('starts_at', [now()->subMonths(2), now()->addMonths(12)])
             ->with([
                 'rosterItem',

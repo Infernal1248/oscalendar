@@ -95,6 +95,27 @@ class CalendarFeedTest extends TestCase
             'phones' => ['+79175733818'],
         ]);
 
+        $cancelledItem = RosterItem::query()->create([
+            'user_id' => $user->id,
+            'source_external_id' => '1660764',
+            'kind' => 'flight_ring',
+            'title' => 'по рейсам',
+            'flight_numbers_raw' => 'ФВ6209/ФВ6210',
+            'route_raw' => 'ШЕРЕМЕТ - ЕКАТЕРИН',
+            'starts_at' => '2026-08-21 09:00:00',
+            'is_actual' => false,
+            'is_removed_from_source' => true,
+        ]);
+        FlightSegment::query()->create([
+            'user_id' => $user->id,
+            'roster_item_id' => $cancelledItem->id,
+            'source_para_id' => 'para-cancelled',
+            'flight_number' => 'ФВ6209',
+            'route_raw' => 'ШЕРЕМЕТ - ЕКАТЕРИН',
+            'starts_at' => '2026-08-21 09:00:00',
+            'ends_at' => '2026-08-21 11:30:00',
+        ]);
+
         $content = $this->get('/api/calendar/'.$feed->token.'.ics')
             ->assertOk()
             ->assertHeader('Content-Type', 'text/calendar; charset=utf-8')
@@ -109,5 +130,6 @@ class CalendarFeedTest extends TestCase
         $this->assertStringNotContainsString('Тип ВС:', $unfolded);
         $this->assertStringNotContainsString('Цель:', $unfolded);
         $this->assertStringNotContainsString('Стоянка:', $unfolded);
+        $this->assertStringNotContainsString('ФВ6209', $unfolded);
     }
 }
