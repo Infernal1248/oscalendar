@@ -43,7 +43,9 @@ class AccountApiTest extends TestCase
         $token = $this->postJson('/api/auth/login', ['login' => '124312', 'password' => 'secret'])
             ->assertOk()
             ->assertJsonPath('user.display_name', 'Web User')
-            ->assertJsonPath('user.permissions.0', 'dashboard.view')
+            ->assertJsonPath('user.navigation.0', 'profile')
+            ->assertJsonMissingPath('user.role')
+            ->assertJsonMissingPath('user.permissions')
             ->json('token');
 
         $this->withToken($token)->getJson('/api/dashboard')->assertOk();
@@ -65,7 +67,29 @@ class AccountApiTest extends TestCase
             'password' => 'strong-password',
         ])
             ->assertOk()
-            ->assertJsonPath('user.role', 'admin')
-            ->assertJsonPath('user.permissions.3', 'users.manage');
+            ->assertJsonPath('user.navigation.1', 'admin.users')
+            ->assertJsonMissingPath('user.role')
+            ->assertJsonMissingPath('user.permissions');
+    }
+
+    public function test_only_admin_can_manage_user_status_and_permissions(): void
+    {
+        $admin = User::query()->create(['display_name' => 'Administrator', 'role' => 'admin']);
+        $user = User::query()->create(['display_name' => 'Crew Member']);
+
+        $this->actingAs($user)->getJson('/api/admin/users')->assertForbidden();
+
+        $this->actingAs($admin)->patchJson("/api/admin/users/{$user->id}", [
+            'status' => 'blocked',
+            'permissions' => [],
+        ])
+            ->assertOk()
+            ->assertJsonPath('status', 'blocked')
+            ->assertJsonPath('permissions.0', 'profile.view');
+
+        $this->assertDatabaseHas('users', [
+            'id' => $user->id,
+            'status' => 'blocked',
+        ]);
     }
 }

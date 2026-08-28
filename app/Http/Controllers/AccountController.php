@@ -97,14 +97,19 @@ class AccountController extends Controller
 
     private function userData(User $user): array
     {
+        $permissions = $user->permissions ?? config('permissions.defaults');
+
         return [
             'id' => $user->id,
             'display_name' => $user->display_name,
             'timezone' => $user->timezone,
-            'role' => $user->role,
-            'permissions' => $user->role === 'admin'
-                ? ['dashboard.view', 'profile.view', 'workplan.view', 'users.manage']
-                : ($user->permissions ?? ['dashboard.view', 'profile.view', 'workplan.view']),
+            'navigation' => $user->role === 'admin'
+                ? ['profile', 'admin.users', 'admin.permissions']
+                : array_values(array_filter([
+                    'profile',
+                    in_array('dashboard.view', $permissions, true) ? 'dashboard' : null,
+                    in_array('workplan.view', $permissions, true) ? 'workplan' : null,
+                ])),
         ];
     }
 

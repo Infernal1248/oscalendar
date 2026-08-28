@@ -48,7 +48,7 @@ class User extends Authenticatable
     public function hasPermission(string $permission): bool
     {
         return $this->role === 'admin'
-            || in_array($permission, $this->permissions ?? ['dashboard.view', 'profile.view', 'workplan.view'], true);
+            || in_array($permission, $this->permissions ?? config('permissions.defaults'), true);
     }
 
     public function telegramAccounts(): HasMany
