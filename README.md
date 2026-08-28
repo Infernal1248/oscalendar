@@ -298,11 +298,19 @@ storage/logs/laravel.log
 
 The log includes update ids, chat ids, Telegram user ids, commands, bridge header rejections, exceptions, and outgoing Telegram API calls. Message text is not logged because onboarding may contain portal credentials.
 
-Create the first admin from console:
+Create the first Telegram bot admin from console:
 
 ```bash
 php artisan telegram:make-admin 123456789 --name="Admin"
 ```
+
+The web cabinet administrator is a separate local account and does not use anyone's portal credentials:
+
+```bash
+php artisan account:make-admin oscalendar-admin --name="Administrator"
+```
+
+The command asks for the password without displaying or storing it in shell history.
 
 User flow:
 

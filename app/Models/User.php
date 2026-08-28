@@ -21,6 +21,10 @@ class User extends Authenticatable
         'display_name',
         'timezone',
         'status',
+        'role',
+        'permissions',
+        'login',
+        'password',
     ];
 
     /**
@@ -29,6 +33,7 @@ class User extends Authenticatable
      * @var array<int, string>
      */
     protected $hidden = [
+        'password',
     ];
 
     /**
@@ -37,7 +42,14 @@ class User extends Authenticatable
      * @var array<string, string>
      */
     protected $casts = [
+        'permissions' => 'array',
     ];
+
+    public function hasPermission(string $permission): bool
+    {
+        return $this->role === 'admin'
+            || in_array($permission, $this->permissions ?? ['dashboard.view', 'profile.view', 'workplan.view'], true);
+    }
 
     public function telegramAccounts(): HasMany
     {

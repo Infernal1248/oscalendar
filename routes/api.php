@@ -1,12 +1,12 @@
 <?php
 
 use App\Http\Controllers\CalendarFeedController;
+use App\Http\Controllers\AccountController;
 use App\Http\Controllers\Internal\ParserJobController;
 use App\Http\Controllers\Internal\PartialSyncResultController;
 use App\Http\Controllers\Internal\SyncResultController;
 use App\Http\Controllers\Internal\SyncRunController;
 use App\Http\Controllers\TelegramWebhookController;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -20,8 +20,12 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
-    return $request->user();
+Route::post('/auth/login', [AccountController::class, 'login'])->middleware('throttle:10,1');
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/account', [AccountController::class, 'me']);
+    Route::post('/auth/logout', [AccountController::class, 'logout']);
+    Route::get('/dashboard', [AccountController::class, 'dashboard']);
+    Route::get('/workplan', [AccountController::class, 'workplan']);
 });
 
 Route::prefix('internal')
