@@ -108,6 +108,8 @@ class AccountController extends Controller
                 'route_raw' => $item->route_raw,
                 'starts_at' => $item->starts_at,
                 'ends_at' => $item->ends_at,
+                'created_at' => $item->created_at,
+                'updated_at' => $item->updated_at,
                 'segments' => $item->flightSegments->map(fn (FlightSegment $segment) => [
                     'id' => $segment->id,
                     'flight_number' => $segment->flight_number,

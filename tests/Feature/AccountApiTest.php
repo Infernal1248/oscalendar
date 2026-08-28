@@ -121,6 +121,7 @@ class AccountApiTest extends TestCase
 
         $this->actingAs($user)->getJson('/api/workplan')
             ->assertOk()
+            ->assertJsonStructure(['0' => ['created_at', 'updated_at']])
             ->assertJsonPath('0.segments.0.flight_number', 'FV1234')
             ->assertJsonMissingPath('0.segments.0.crew');
 
