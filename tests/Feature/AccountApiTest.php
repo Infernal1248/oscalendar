@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\PortalCredential;
+use App\Models\FlightSegment;
+use App\Models\RosterItem;
 use App\Models\User;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Crypt;
@@ -91,5 +93,44 @@ class AccountApiTest extends TestCase
             'id' => $user->id,
             'status' => 'blocked',
         ]);
+    }
+
+    public function test_workplan_returns_segment_summary_and_loads_full_details_separately(): void
+    {
+        $user = User::query()->create(['display_name' => 'Crew Member']);
+        $rosterItem = RosterItem::query()->create([
+            'user_id' => $user->id,
+            'source' => 'rossiya_edu',
+            'source_external_id' => 'ring-1',
+            'kind' => 'flight_ring',
+            'starts_at' => now()->addDay(),
+        ]);
+        $segment = FlightSegment::query()->create([
+            'user_id' => $user->id,
+            'roster_item_id' => $rosterItem->id,
+            'source' => 'rossiya_edu',
+            'source_para_id' => 'ring-1',
+            'flight_number' => 'FV1234',
+            'starts_at' => now()->addDay(),
+        ]);
+        $segment->crewMembers()->create([
+            'role' => 'КВС',
+            'full_name' => 'Иванов Иван Иванович',
+            'phones' => ['+79990000000'],
+        ]);
+
+        $this->actingAs($user)->getJson('/api/workplan')
+            ->assertOk()
+            ->assertJsonPath('0.segments.0.flight_number', 'FV1234')
+            ->assertJsonMissingPath('0.segments.0.crew');
+
+        $this->actingAs($user)->getJson("/api/workplan/flights/{$segment->id}")
+            ->assertOk()
+            ->assertJsonPath('crew.0.full_name', 'Иванов Иван Иванович')
+            ->assertJsonPath('crew.0.phones.0', '+79990000000');
+
+        $this->actingAs($user)->patchJson('/api/account', ['timezone' => 'Asia/Krasnoyarsk'])
+            ->assertOk()
+            ->assertJsonPath('timezone', 'Asia/Krasnoyarsk');
     }
 }

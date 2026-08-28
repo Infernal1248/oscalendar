@@ -24,9 +24,11 @@ use Illuminate\Support\Facades\Route;
 Route::post('/auth/login', [AccountController::class, 'login'])->middleware('throttle:10,1');
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/account', [AccountController::class, 'me']);
+    Route::patch('/account', [AccountController::class, 'updateProfile']);
     Route::post('/auth/logout', [AccountController::class, 'logout']);
     Route::get('/dashboard', [AccountController::class, 'dashboard']);
     Route::get('/workplan', [AccountController::class, 'workplan']);
+    Route::get('/workplan/flights/{flightSegment}', [AccountController::class, 'flight']);
     Route::get('/admin/users', [AdminUserController::class, 'index']);
     Route::patch('/admin/users/{user}', [AdminUserController::class, 'update']);
     Route::get('/admin/permissions', [AdminUserController::class, 'permissions']);
