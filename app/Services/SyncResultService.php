@@ -207,6 +207,8 @@ class SyncResultService
             );
         }
 
+        $savedSegmentIds = [];
+        $segmentRosterItemIds = [];
         foreach ($payload['flight_segments'] ?? [] as $segmentPayload) {
             if (empty($segmentPayload['roster_source_external_id']) && ! empty($payload['roster_source_external_id'])) {
                 $segmentPayload['roster_source_external_id'] = $payload['roster_source_external_id'];
@@ -227,6 +229,10 @@ class SyncResultService
                 $segment->ofp_url = $segmentPayload['ofp_url'];
             }
             $segment->save();
+            $savedSegmentIds[] = $segment->id;
+            if ($segment->roster_item_id) {
+                $segmentRosterItemIds[] = $segment->roster_item_id;
+            }
 
             $segment->crewMembers()->delete();
             foreach ($segmentPayload['crew'] ?? [] as $crewPayload) {
@@ -263,6 +269,13 @@ class SyncResultService
             }
 
             $stats[$created ? 'segments_created' : 'segments_updated']++;
+        }
+
+        if (($payload['chunk_kind'] ?? null) === 'flight_segments' && $savedSegmentIds) {
+            FlightSegment::query()
+                ->whereIn('roster_item_id', array_unique($segmentRosterItemIds))
+                ->whereNotIn('id', $savedSegmentIds)
+                ->delete();
         }
 
         $rosterChangeEvent = null;

@@ -133,6 +133,14 @@ class PartialSyncResultTest extends TestCase
         $this->postChunk($syncRun, $flightWithoutOfp)->assertOk();
         $this->assertSame('https://edu.rossiya-airlines.com/ops/detail/ofp-1/', $segment->fresh()->ofp_url);
 
+        $shiftedFlight = $flightPayload;
+        $shiftedFlight['parsed_at'] = '2026-08-04T09:40:08Z';
+        $shiftedFlight['flight_segments'][0]['starts_at'] = '2026-08-04T10:15:00Z';
+        $this->postChunk($syncRun, $shiftedFlight)->assertOk();
+        $this->assertSame(1, FlightSegment::query()->count());
+        $this->assertDatabaseMissing('flight_segments', ['starts_at' => '2026-08-04 10:00:00']);
+        $this->assertDatabaseHas('flight_segments', ['starts_at' => '2026-08-04 10:15:00']);
+
         $this->withToken($this->token)
             ->postJson('/api/internal/sync-runs/'.$syncRun->id.'/finish', [
                 'status' => 'finished',
