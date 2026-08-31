@@ -211,6 +211,7 @@ class ParserTaskFlowTest extends TestCase
 
         $event = RosterChangeEvent::query()->sole();
         $this->assertSame('pending', $event->status);
+        $this->assertSame('changed', $event->changes[0]['change_type']);
         $this->assertSame('ФВ6031/ФВ6032', $event->changes[0]['before']['flight_numbers_raw']);
         $this->assertSame('ФВ6033/ФВ6034', $event->changes[0]['after']['flight_numbers_raw']);
         $this->assertNotNull($event->notified_at);

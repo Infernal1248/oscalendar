@@ -180,8 +180,15 @@ class SyncResultService
             $item->save();
             $this->taskScheduler->scheduleFlightDetails($item, $detailsChanged);
 
-            if (($itemPayload['source_payload']['portal_change']['is_changed'] ?? false) === true) {
-                $markedItems[] = ['before' => $before, 'after' => $this->rosterSnapshot($item)];
+            $portalChange = $itemPayload['source_payload']['portal_change'] ?? [];
+            if (($portalChange['is_changed'] ?? false) === true) {
+                $markedItems[] = [
+                    'before' => $before,
+                    'after' => $this->rosterSnapshot($item),
+                    'change_type' => ($portalChange['is_removed'] ?? false)
+                        ? 'removed'
+                        : (($portalChange['is_new'] ?? false) ? 'added' : 'changed'),
+                ];
             }
 
             $stats[$created ? 'items_created' : 'items_updated']++;

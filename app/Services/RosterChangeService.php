@@ -70,6 +70,7 @@ class RosterChangeService
 
             return [
                 'source_external_id' => $after['source_external_id'] ?? null,
+                'change_type' => $item['change_type'] ?? 'changed',
                 'before' => $before,
                 'after' => $after,
                 'changed_fields' => $changedFields,
