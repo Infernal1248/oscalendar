@@ -133,6 +133,17 @@ class RosterChangeNotifier
             if ($index > 0) {
                 $lines[] = '──────────';
             }
+            $changeType = $change['change_type'] ?? 'changed';
+            if ($changeType === 'added') {
+                $lines[] = '<b>Добавлена задача:</b>';
+                $lines = array_merge($lines, $this->snapshotLines($change['after'] ?? []));
+                continue;
+            }
+            if ($changeType === 'removed') {
+                $lines[] = '<b>Удалена задача:</b>';
+                $lines = array_merge($lines, $this->snapshotLines($change['before'] ?? $change['after'] ?? []));
+                continue;
+            }
             if (! ($change['previous_available'] ?? false)) {
                 $lines[] = '<b>Предыдущие данные неизвестны</b>';
                 $lines[] = 'Изменение обнаружено при первой синхронизации.';
@@ -140,7 +151,7 @@ class RosterChangeNotifier
                 continue;
             }
 
-            $lines[] = '<b>Задача до изменения:</b>';
+            $lines[] = '<b>Изменена задача:</b>';
             $lines = array_merge($lines, $this->snapshotLines($change['before'] ?? []));
             $lines[] = '';
             $lines[] = '<b>Изменения:</b>';

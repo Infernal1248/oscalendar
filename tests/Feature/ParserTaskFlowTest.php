@@ -215,6 +215,7 @@ class ParserTaskFlowTest extends TestCase
         $this->assertSame('ФВ6031/ФВ6032', $event->changes[0]['before']['flight_numbers_raw']);
         $this->assertSame('ФВ6033/ФВ6034', $event->changes[0]['after']['flight_numbers_raw']);
         $this->assertNotNull($event->notified_at);
+        Http::assertSent(fn ($request) => str_contains((string) ($request['text'] ?? ''), '<b>Изменена задача:</b>'));
 
         app(TelegramBotService::class)->handle(['callback_query' => [
             'id' => 'callback-1',
