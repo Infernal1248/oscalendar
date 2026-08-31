@@ -14,6 +14,7 @@ use App\Services\ParserTaskScheduler;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 
 class TelegramBotService
@@ -521,10 +522,10 @@ class TelegramBotService
     private function sendCalendarLink(int $chatId, TelegramAccount $account): void
     {
         $feed = CalendarFeed::query()->firstOrCreate(
-            ['user_id' => $account->user_id, 'name' => 'Telegram'],
+            ['user_id' => $account->user_id, 'is_active' => true],
             [
                 'token' => Str::random(80),
-                'is_active' => true,
+                'name' => 'Personal',
                 'include_crew' => false,
                 'include_phones' => false,
                 'include_deferred' => false,
@@ -636,6 +637,7 @@ class TelegramBotService
             $segment->parking_minutes ? 'Остановка: '.$this->formatParking((int) $segment->parking_minutes) : null,
             $segment->open_doc_url ? '<a href="'.$this->e($segment->open_doc_url).'">Просмотреть задание</a>' : null,
             $segment->download_doc_url ? '<a href="'.$this->e($segment->download_doc_url).'">Скачать задание</a>' : null,
+            $segment->ofp_pdf_path ? '<a href="'.$this->e(URL::signedRoute('flight.ofp', ['flightSegment' => $segment->id])).'">Скачать OFP</a>' : null,
         ]);
 
         if ($segment->crewMembers->isNotEmpty()) {

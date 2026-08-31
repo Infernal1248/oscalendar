@@ -2,15 +2,19 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CalendarFeed;
 use App\Models\PortalCredential;
 use App\Models\RosterItem;
 use App\Models\FlightSegment;
+use App\Models\RosterChangeEvent;
 use App\Models\User;
 use DateTimeZone;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 class AccountController extends Controller
@@ -108,7 +112,6 @@ class AccountController extends Controller
                 'route_raw' => $item->route_raw,
                 'starts_at' => $item->starts_at,
                 'ends_at' => $item->ends_at,
-                'created_at' => $item->created_at,
                 'updated_at' => $item->updated_at,
                 'segments' => $item->flightSegments->map(fn (FlightSegment $segment) => [
                     'id' => $segment->id,
@@ -124,6 +127,20 @@ class AccountController extends Controller
             ]);
 
         return response()->json($items);
+    }
+
+    public function changeHistory(Request $request): JsonResponse
+    {
+        $this->permit($request, 'history.view');
+
+        return response()->json(RosterChangeEvent::query()
+            ->where('user_id', $request->user()->id)
+            ->select([
+                'id', 'period', 'status', 'changes', 'created_at',
+                'acknowledgement_requested_at', 'acknowledged_at', 'superseded_at',
+            ])
+            ->latest()
+            ->get());
     }
 
     public function flight(Request $request, int $flightSegment): JsonResponse
@@ -153,6 +170,9 @@ class AccountController extends Controller
             'arr_stand' => $segment->arr_stand,
             'open_doc_url' => $segment->open_doc_url,
             'download_doc_url' => $segment->download_doc_url,
+            'ofp_url' => $segment->ofp_pdf_path
+                ? URL::signedRoute('flight.ofp', ['flightSegment' => $segment->id])
+                : null,
             'crew' => $segment->crewMembers->map(fn ($member) => [
                 'role' => $member->role,
                 'full_name' => $member->full_name,
@@ -192,17 +212,33 @@ class AccountController extends Controller
     private function userData(User $user): array
     {
         $permissions = $user->permissions ?? config('permissions.defaults');
+        $calendarUrl = null;
+        if ($user->role !== 'admin') {
+            $feed = CalendarFeed::query()->firstOrCreate(
+                ['user_id' => $user->id, 'is_active' => true],
+                [
+                    'token' => Str::random(80),
+                    'name' => 'Personal',
+                    'include_crew' => false,
+                    'include_phones' => false,
+                    'include_deferred' => false,
+                ]
+            );
+            $calendarUrl = rtrim((string) config('app.url'), '/').'/api/calendar/'.$feed->token.'.ics';
+        }
 
         return [
             'id' => $user->id,
             'display_name' => $user->display_name,
             'timezone' => $user->timezone,
+            'calendar_url' => $calendarUrl,
             'navigation' => $user->role === 'admin'
                 ? ['profile', 'admin.users', 'admin.permissions']
                 : array_values(array_filter([
                     'profile',
                     in_array('dashboard.view', $permissions, true) ? 'dashboard' : null,
                     in_array('workplan.view', $permissions, true) ? 'workplan' : null,
+                    in_array('history.view', $permissions, true) ? 'history' : null,
                 ])),
         ];
     }

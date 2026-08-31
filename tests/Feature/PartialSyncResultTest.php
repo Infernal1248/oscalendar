@@ -10,6 +10,7 @@ use App\Models\SyncRunPartialChunk;
 use App\Models\User;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use PDO;
 use Tests\TestCase;
 
@@ -31,6 +32,7 @@ class PartialSyncResultTest extends TestCase
         ]);
         DB::purge('sqlite');
         Artisan::call('migrate', ['--force' => true]);
+        Storage::fake('local');
 
         InternalApiToken::query()->create([
             'name' => 'partial sync test',
@@ -77,6 +79,7 @@ class PartialSyncResultTest extends TestCase
                 'source_para_id' => 'para-1',
                 'flight_number' => 'FV123',
                 'starts_at' => '2026-08-04T10:00:00Z',
+                'ofp_pdf_base64' => base64_encode("%PDF-1.4\nOFP"),
                 'crew' => [[
                     'role' => 'КВС',
                     'full_name' => 'Test Person',
@@ -124,6 +127,8 @@ class PartialSyncResultTest extends TestCase
         $this->assertSame(['+79990000000'], $segment->crewMembers()->first()->phones);
         $this->assertSame('D 25-43-00', $segment->deferredItems()->first()->mel);
         $this->assertSame('13988', $segment->deferredItems()->first()->tah);
+        $this->assertNotNull($segment->ofp_pdf_path);
+        Storage::disk('local')->assertExists($segment->ofp_pdf_path);
 
         $this->withToken($this->token)
             ->postJson('/api/internal/sync-runs/'.$syncRun->id.'/finish', [
@@ -134,6 +139,24 @@ class PartialSyncResultTest extends TestCase
             ->assertJsonPath('status', 'finished');
 
         $this->assertSame('finished', $syncRun->fresh()->status);
+    }
+
+    public function test_old_ofp_documents_are_pruned(): void
+    {
+        $user = User::query()->create(['display_name' => 'Parser Test']);
+        $segment = FlightSegment::query()->create([
+            'user_id' => $user->id,
+            'source' => 'rossiya_edu',
+            'flight_number' => 'FV123',
+            'starts_at' => '2000-01-01 00:00:00',
+            'ofp_pdf_path' => 'flight-documents/'.$user->id.'/old.pdf',
+        ]);
+        Storage::disk('local')->put($segment->ofp_pdf_path, "%PDF-1.4\nOFP");
+
+        Artisan::call('flight-documents:prune');
+
+        Storage::disk('local')->assertMissing('flight-documents/'.$user->id.'/old.pdf');
+        $this->assertNull($segment->fresh()->ofp_pdf_path);
     }
 
     private function postChunk(SyncRun $syncRun, array $payload)

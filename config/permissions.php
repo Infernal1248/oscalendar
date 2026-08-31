@@ -17,11 +17,16 @@ return [
             'description' => 'Просмотр актуального рабочего плана.',
             'assignable' => true,
         ],
+        'history.view' => [
+            'name' => 'Хронология изменений',
+            'description' => 'Просмотр изменений рабочего плана и времени их подтверждения.',
+            'assignable' => true,
+        ],
         'users.manage' => [
             'name' => 'Управление пользователями',
             'description' => 'Системное право локального администратора.',
             'assignable' => false,
         ],
     ],
-    'defaults' => ['dashboard.view', 'profile.view', 'workplan.view'],
+    'defaults' => ['dashboard.view', 'profile.view', 'workplan.view', 'history.view'],
 ];

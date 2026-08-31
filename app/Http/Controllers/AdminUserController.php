@@ -16,6 +16,7 @@ class AdminUserController extends Controller
         $users = User::query()
             ->where('role', 'user')
             ->with(['portalCredentials:id,user_id,login,status', 'telegramAccounts:id,user_id,telegram_id,username'])
+            ->orderByRaw("CASE WHEN status = 'pending' THEN 0 ELSE 1 END")
             ->orderBy('display_name')
             ->orderBy('id')
             ->get()

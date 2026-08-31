@@ -47,6 +47,7 @@ class TelegramFlightDeferredTest extends TestCase
     public function test_flight_message_shows_warnings_and_buttons_open_complete_group_details(): void
     {
         [$account, $segment] = $this->flightForTelegramUser(123456);
+        $segment->forceFill(['ofp_pdf_path' => 'flight-documents/'.$account->user_id.'/segment.pdf'])->save();
 
         $segment->crewMembers()->create([
             'role' => 'КВС',
@@ -99,6 +100,7 @@ class TelegramFlightDeferredTest extends TestCase
             && str_contains((string) $request['text'], 'Warning MEL item')
             && str_contains((string) $request['text'], 'W/O: 517962341')
             && str_contains((string) $request['text'], 'Date: Iss: 04.08.2026 Due: 09.08.2026')
+            && str_contains((string) $request['text'], 'Скачать OFP')
             && ! str_contains((string) $request['text'], 'Future MEL item')
             && ($request['reply_markup']['inline_keyboard'][0][0] ?? null) === [
                 'text' => 'Все MEL (2)',

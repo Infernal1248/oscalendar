@@ -4,12 +4,14 @@ namespace Tests\Feature;
 
 use App\Models\PortalCredential;
 use App\Models\FlightSegment;
+use App\Models\RosterChangeEvent;
 use App\Models\RosterItem;
 use App\Models\User;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use PDO;
 use Tests\TestCase;
 
@@ -26,6 +28,7 @@ class AccountApiTest extends TestCase
         config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:']);
         DB::purge('sqlite');
         Artisan::call('migrate', ['--force' => true]);
+        Storage::fake('local');
     }
 
     public function test_portal_credentials_login_and_permissions_protect_account_api(): void
@@ -112,7 +115,9 @@ class AccountApiTest extends TestCase
             'source_para_id' => 'ring-1',
             'flight_number' => 'FV1234',
             'starts_at' => now()->addDay(),
+            'ofp_pdf_path' => 'flight-documents/'.$user->id.'/segment.pdf',
         ]);
+        Storage::disk('local')->put($segment->ofp_pdf_path, "%PDF-1.4\nOFP");
         $segment->crewMembers()->create([
             'role' => 'КВС',
             'full_name' => 'Иванов Иван Иванович',
@@ -121,17 +126,47 @@ class AccountApiTest extends TestCase
 
         $this->actingAs($user)->getJson('/api/workplan')
             ->assertOk()
-            ->assertJsonStructure(['0' => ['created_at', 'updated_at']])
+            ->assertJsonStructure(['0' => ['updated_at']])
             ->assertJsonPath('0.segments.0.flight_number', 'FV1234')
             ->assertJsonMissingPath('0.segments.0.crew');
 
-        $this->actingAs($user)->getJson("/api/workplan/flights/{$segment->id}")
+        $flightResponse = $this->actingAs($user)->getJson("/api/workplan/flights/{$segment->id}")
             ->assertOk()
             ->assertJsonPath('crew.0.full_name', 'Иванов Иван Иванович')
-            ->assertJsonPath('crew.0.phones.0', '+79990000000');
+            ->assertJsonPath('crew.0.phones.0', '+79990000000')
+            ->assertJsonPath('ofp_url', fn ($value) => is_string($value) && str_contains($value, '/ofp.pdf'));
+
+        $this->get($flightResponse->json('ofp_url'))
+            ->assertOk()
+            ->assertHeader('Content-Type', 'application/pdf');
 
         $this->actingAs($user)->patchJson('/api/account', ['timezone' => 'Asia/Krasnoyarsk'])
             ->assertOk()
-            ->assertJsonPath('timezone', 'Asia/Krasnoyarsk');
+            ->assertJsonPath('timezone', 'Asia/Krasnoyarsk')
+            ->assertJsonPath('calendar_url', fn ($value) => is_string($value) && str_ends_with($value, '.ics'));
+    }
+
+    public function test_user_can_view_roster_change_history(): void
+    {
+        $user = User::query()->create(['display_name' => 'Crew Member']);
+        RosterChangeEvent::query()->create([
+            'user_id' => $user->id,
+            'source' => 'rossiya_edu',
+            'period' => '2026-08',
+            'change_hash' => str_repeat('a', 64),
+            'status' => 'acknowledged',
+            'changes' => [[
+                'changed_fields' => [
+                    'route_raw' => ['label' => 'Маршрут', 'before' => 'SVO - LED', 'after' => 'SVO - KZN'],
+                ],
+            ]],
+            'acknowledged_at' => now(),
+        ]);
+
+        $this->actingAs($user)->getJson('/api/change-history')
+            ->assertOk()
+            ->assertJsonPath('0.period', '2026-08')
+            ->assertJsonPath('0.status', 'acknowledged')
+            ->assertJsonPath('0.changes.0.changed_fields.route_raw.after', 'SVO - KZN');
     }
 }

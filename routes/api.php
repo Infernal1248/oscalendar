@@ -3,6 +3,7 @@
 use App\Http\Controllers\CalendarFeedController;
 use App\Http\Controllers\AccountController;
 use App\Http\Controllers\AdminUserController;
+use App\Http\Controllers\FlightDocumentController;
 use App\Http\Controllers\Internal\ParserJobController;
 use App\Http\Controllers\Internal\PartialSyncResultController;
 use App\Http\Controllers\Internal\SyncResultController;
@@ -28,6 +29,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/auth/logout', [AccountController::class, 'logout']);
     Route::get('/dashboard', [AccountController::class, 'dashboard']);
     Route::get('/workplan', [AccountController::class, 'workplan']);
+    Route::get('/change-history', [AccountController::class, 'changeHistory']);
     Route::get('/workplan/flights/{flightSegment}', [AccountController::class, 'flight']);
     Route::get('/admin/users', [AdminUserController::class, 'index']);
     Route::patch('/admin/users/{user}', [AdminUserController::class, 'update']);
@@ -48,3 +50,6 @@ Route::prefix('internal')
 
 Route::post('/telegram/webhook', TelegramWebhookController::class);
 Route::get('/calendar/{token}.ics', [CalendarFeedController::class, 'show']);
+Route::get('/flight-documents/{flightSegment}/ofp.pdf', [FlightDocumentController::class, 'ofp'])
+    ->middleware('signed')
+    ->name('flight.ofp');
