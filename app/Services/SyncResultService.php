@@ -12,8 +12,6 @@ use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Validation\ValidationException;
 
 class SyncResultService
 {
@@ -218,8 +216,10 @@ class SyncResultService
             $segment = FlightSegment::query()->firstOrNew($identity);
             $created = ! $segment->exists;
             $segment->fill($this->segmentAttributes($userId, $source, $segmentPayload, $rosterByExternalId));
+            if (! empty($segmentPayload['ofp_url'])) {
+                $segment->ofp_url = $segmentPayload['ofp_url'];
+            }
             $segment->save();
-            $this->storeOfpPdf($segment, $segmentPayload['ofp_pdf_base64'] ?? null);
 
             $segment->crewMembers()->delete();
             foreach ($segmentPayload['crew'] ?? [] as $crewPayload) {
@@ -295,24 +295,6 @@ class SyncResultService
             'roster_change_event' => $rosterChangeEvent,
             'acknowledged_event' => $acknowledgedEvent,
         ];
-    }
-
-    private function storeOfpPdf(FlightSegment $segment, ?string $encoded): void
-    {
-        if (! $encoded) {
-            return;
-        }
-
-        $pdf = base64_decode($encoded, true);
-        if ($pdf === false || ! str_starts_with($pdf, '%PDF-')) {
-            throw ValidationException::withMessages(['flight_segments' => 'OFP document is not a valid PDF.']);
-        }
-
-        $path = 'flight-documents/'.$segment->user_id.'/segment-'.$segment->id.'.pdf';
-        if (! Storage::disk('local')->put($path, $pdf)) {
-            throw ValidationException::withMessages(['flight_segments' => 'OFP document could not be stored.']);
-        }
-        $segment->forceFill(['ofp_pdf_path' => $path])->save();
     }
 
     private function rosterSnapshot(RosterItem $item): array

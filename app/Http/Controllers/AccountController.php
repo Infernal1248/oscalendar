@@ -13,7 +13,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
@@ -170,9 +169,7 @@ class AccountController extends Controller
             'arr_stand' => $segment->arr_stand,
             'open_doc_url' => $segment->open_doc_url,
             'download_doc_url' => $segment->download_doc_url,
-            'ofp_url' => $segment->ofp_pdf_path
-                ? URL::signedRoute('flight.ofp', ['flightSegment' => $segment->id])
-                : null,
+            'ofp_url' => $segment->ofp_url,
             'crew' => $segment->crewMembers->map(fn ($member) => [
                 'role' => $member->role,
                 'full_name' => $member->full_name,

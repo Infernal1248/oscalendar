@@ -53,7 +53,7 @@ class SyncResultRequest extends FormRequest
             'flight_segments.*.arr_stand' => ['nullable', 'string', 'max:32'],
             'flight_segments.*.open_doc_url' => ['nullable', 'url'],
             'flight_segments.*.download_doc_url' => ['nullable', 'url'],
-            'flight_segments.*.ofp_pdf_base64' => ['nullable', 'string', 'max:10485760'],
+            'flight_segments.*.ofp_url' => ['nullable', 'url'],
             'flight_segments.*.next_update_at' => ['nullable', 'date'],
             'flight_segments.*.source_payload' => ['nullable', 'array'],
             'flight_segments.*.crew' => ['nullable', 'array'],

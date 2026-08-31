@@ -3,7 +3,6 @@
 use App\Http\Controllers\CalendarFeedController;
 use App\Http\Controllers\AccountController;
 use App\Http\Controllers\AdminUserController;
-use App\Http\Controllers\FlightDocumentController;
 use App\Http\Controllers\Internal\ParserJobController;
 use App\Http\Controllers\Internal\PartialSyncResultController;
 use App\Http\Controllers\Internal\SyncResultController;
@@ -50,6 +49,3 @@ Route::prefix('internal')
 
 Route::post('/telegram/webhook', TelegramWebhookController::class);
 Route::get('/calendar/{token}.ics', [CalendarFeedController::class, 'show']);
-Route::get('/flight-documents/{flightSegment}/ofp.pdf', [FlightDocumentController::class, 'ofp'])
-    ->middleware('signed')
-    ->name('flight.ofp');

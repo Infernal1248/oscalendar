@@ -28,7 +28,7 @@ class FlightSegment extends Model
         'arr_stand',
         'open_doc_url',
         'download_doc_url',
-        'ofp_pdf_path',
+        'ofp_url',
         'next_update_at',
         'source_hash',
         'source_payload',

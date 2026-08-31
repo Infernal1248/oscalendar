@@ -11,7 +11,6 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Storage;
 use PDO;
 use Tests\TestCase;
 
@@ -28,7 +27,6 @@ class AccountApiTest extends TestCase
         config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:']);
         DB::purge('sqlite');
         Artisan::call('migrate', ['--force' => true]);
-        Storage::fake('local');
     }
 
     public function test_portal_credentials_login_and_permissions_protect_account_api(): void
@@ -115,9 +113,8 @@ class AccountApiTest extends TestCase
             'source_para_id' => 'ring-1',
             'flight_number' => 'FV1234',
             'starts_at' => now()->addDay(),
-            'ofp_pdf_path' => 'flight-documents/'.$user->id.'/segment.pdf',
+            'ofp_url' => 'https://edu.rossiya-airlines.com/ops/detail/ofp-1/',
         ]);
-        Storage::disk('local')->put($segment->ofp_pdf_path, "%PDF-1.4\nOFP");
         $segment->crewMembers()->create([
             'role' => 'КВС',
             'full_name' => 'Иванов Иван Иванович',
@@ -130,15 +127,11 @@ class AccountApiTest extends TestCase
             ->assertJsonPath('0.segments.0.flight_number', 'FV1234')
             ->assertJsonMissingPath('0.segments.0.crew');
 
-        $flightResponse = $this->actingAs($user)->getJson("/api/workplan/flights/{$segment->id}")
+        $this->actingAs($user)->getJson("/api/workplan/flights/{$segment->id}")
             ->assertOk()
             ->assertJsonPath('crew.0.full_name', 'Иванов Иван Иванович')
             ->assertJsonPath('crew.0.phones.0', '+79990000000')
-            ->assertJsonPath('ofp_url', fn ($value) => is_string($value) && str_contains($value, '/ofp.pdf'));
-
-        $this->get($flightResponse->json('ofp_url'))
-            ->assertOk()
-            ->assertHeader('Content-Type', 'application/pdf');
+            ->assertJsonPath('ofp_url', 'https://edu.rossiya-airlines.com/ops/detail/ofp-1/');
 
         $this->actingAs($user)->patchJson('/api/account', ['timezone' => 'Asia/Krasnoyarsk'])
             ->assertOk()
