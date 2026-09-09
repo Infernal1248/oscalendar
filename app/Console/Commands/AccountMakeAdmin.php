@@ -4,6 +4,8 @@ namespace App\Console\Commands;
 
 use App\Models\PortalCredential;
 use App\Models\User;
+use App\Models\Role;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Hash;
 
@@ -35,15 +37,19 @@ class AccountMakeAdmin extends Command
             return self::FAILURE;
         }
 
-        User::query()->updateOrCreate(
-            ['login' => $login],
-            [
-                'display_name' => (string) $this->option('name'),
-                'status' => 'active',
-                'role' => 'admin',
-                'password' => Hash::make($password),
-            ]
-        );
+        DB::transaction(function () use ($login, $password) {
+            $adminRole = Role::lockAdministration();
+            $user = User::query()->updateOrCreate(
+                ['login' => $login],
+                [
+                    'display_name' => (string) $this->option('name'),
+                    'status' => 'active',
+                    'role' => 'admin',
+                    'password' => Hash::make($password),
+                ]
+            );
+            $user->roles()->syncWithoutDetaching([$adminRole->id]);
+        });
 
         $this->info('Web administrator is ready.');
         return self::SUCCESS;

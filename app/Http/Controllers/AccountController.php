@@ -64,6 +64,7 @@ class AccountController extends Controller
 
     public function updateProfile(Request $request): JsonResponse
     {
+        abort_unless($request->user()->status === 'active', 403);
         $data = $request->validate([
             'timezone' => ['required', 'string', Rule::in(DateTimeZone::listIdentifiers())],
         ]);
@@ -211,7 +212,8 @@ class AccountController extends Controller
 
     private function userData(User $user): array
     {
-        $permissions = $user->permissions ?? config('permissions.defaults');
+        abort_unless($user->status === 'active', 403);
+        $permissions = $user->effectivePermissions();
         $calendarUrl = null;
         if ($user->role !== 'admin') {
             $feed = CalendarFeed::query()->firstOrCreate(
@@ -232,19 +234,23 @@ class AccountController extends Controller
             'display_name' => $user->display_name,
             'timezone' => $user->timezone,
             'calendar_url' => $calendarUrl,
+            'users_access' => [
+                'manage' => $user->hasPermission('users.view') && $user->hasPermission('users.manage'),
+                'assign_roles' => $user->isAdmin(),
+            ],
             'deviations_access' => [
                 'read' => $user->hasPermission('deviations.view') && $user->hasPermission('deviations.read'),
                 'import' => $user->hasPermission('deviations.view') && $user->hasPermission('deviations.import'),
             ],
-            'navigation' => $user->role === 'admin'
-                ? ['profile', 'admin.users', 'admin.permissions']
-                : array_values(array_filter([
-                    'profile',
-                    in_array('dashboard.view', $permissions, true) ? 'dashboard' : null,
-                    in_array('workplan.view', $permissions, true) ? 'workplan' : null,
-                    in_array('history.view', $permissions, true) ? 'history' : null,
-                    in_array('deviations.view', $permissions, true) ? 'deviations' : null,
-                ])),
+            'navigation' => array_values(array_filter([
+                'profile',
+                in_array('dashboard.view', $permissions, true) ? 'dashboard' : null,
+                in_array('workplan.view', $permissions, true) ? 'workplan' : null,
+                in_array('history.view', $permissions, true) ? 'history' : null,
+                in_array('deviations.view', $permissions, true) ? 'deviations' : null,
+                in_array('users.view', $permissions, true) ? 'admin.users' : null,
+                $user->isAdmin() ? 'admin.permissions' : null,
+            ])),
         ];
     }
 

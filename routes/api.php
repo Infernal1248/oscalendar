@@ -4,6 +4,7 @@ use App\Http\Controllers\CalendarFeedController;
 use App\Http\Controllers\AccountController;
 use App\Http\Controllers\AdminUserController;
 use App\Http\Controllers\DeviationController;
+use App\Http\Controllers\RoleController;
 use App\Http\Controllers\Internal\ParserJobController;
 use App\Http\Controllers\Internal\PartialSyncResultController;
 use App\Http\Controllers\Internal\SyncResultController;
@@ -35,7 +36,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/workplan/flights/{flightSegment}', [AccountController::class, 'flight']);
     Route::get('/admin/users', [AdminUserController::class, 'index']);
     Route::patch('/admin/users/{user}', [AdminUserController::class, 'update']);
-    Route::get('/admin/permissions', [AdminUserController::class, 'permissions']);
+    Route::get('/admin/permissions', [RoleController::class, 'permissions']);
+    Route::get('/admin/roles', [RoleController::class, 'index']);
+    Route::post('/admin/roles', [RoleController::class, 'store']);
+    Route::patch('/admin/roles/{role}', [RoleController::class, 'update']);
+    Route::delete('/admin/roles/{role}', [RoleController::class, 'destroy']);
 });
 
 Route::prefix('internal')

@@ -43,7 +43,7 @@ php artisan optimize:clear
 
 PhpSpreadsheet requires PHP extensions including `gd`, `zip`, `mbstring`, `dom`, `xmlreader` and `xmlwriter`; Composer checks the complete requirements. Configure PHP `upload_max_filesize` to at least `10M`, `post_max_size` above `10M`, and the web server body limit accordingly.
 
-Administrators have access automatically. Grant ordinary users these permissions through **Пользователи → Настроить** (none are enabled by default):
+Administrators have access automatically. Grant ordinary users the **Просмотр отклонений** or **Импорт отклонений** role through **Пользователи → Настроить**. These roles contain the following permissions (none are enabled for the basic user role):
 
 - `deviations.view`: page/navigation.
 - `deviations.read`: shared table, requires `deviations.view`.
@@ -60,6 +60,47 @@ Example: `/api/deviations?date_from=2025-12-01&date_to=2025-12-09&filters[event_
 Deduplication uses a unique SHA-256 key over the normalized event fields, excluding the report count, filename, uploader and import timestamps. Thus weekly/monthly overlap is skipped even if report totals differ. The first report count is retained as source metadata, not a live count of filtered results. The export has no unique occurrence ID: identical event rows are considered the same occurrence; rows with different actual values remain distinct. A malformed file does not modify existing records.
 
 Run the API/import checks with `php artisan test --filter=DeviationApiTest`. Optionally set `AIRFASE_SAMPLE` to a local AirFASE export to test importing it twice against an in-memory test database; personal exports are not committed.
+
+## Roles and permissions
+
+Users can hold several roles; access is the union of their role permissions. The `roles` table
+stores a role name, description and permission keys, and `role_user` stores membership.
+The permission catalog remains in `config/permissions.php`: only permissions implemented in code
+can be selected. Individual `users.permissions` is retained for migration/rollback history and
+is no longer an authorization source. Legacy `users.role` still distinguishes the original
+local admin account from portal accounts for login/calendar setup; it no longer grants web admin access.
+
+Initial roles: **Пользователь**, **Просмотр отклонений**, **Импорт отклонений**,
+**Просмотр пользователей**, **Управление пользователями**, **Администратор**.
+New accounts get the basic role, but permissions are inactive until approval (`status=active`).
+The profile is always available to active users. Blocked, banned and pending users have no effective permissions.
+
+Only holders of the protected **Администратор** role can create/edit roles or assign them.
+`users.view` permits listing users; `users.manage` additionally permits ordinary user status changes,
+not role assignment or modification of administrators. The administrator role cannot be edited/deleted,
+the default user role cannot be deleted, and removing/blocking the last active admin is rejected.
+Assigned custom roles cannot be deleted until their members are reassigned. The console command
+`account:make-admin` continues to create/grant a system administrator for bootstrap or recovery.
+Telegram bot administration (`telegram_accounts.is_admin`) remains separate and is unchanged.
+
+The migration preserves existing users' exact permission sets, without automatically giving them
+new rights. Nonstandard sets become shared **Перенесённые права #…** roles that administrators can
+rename or replace later. Existing account IDs, portal credentials and Telegram links are untouched.
+
+Admin API: `GET/POST /api/admin/roles`, `PATCH/DELETE /api/admin/roles/{id}`,
+`GET /api/admin/permissions` (read-only catalog), and `PATCH /api/admin/users/{id}`
+with optional `status` and `role_ids`. Old `permissions`/`role` payloads are rejected.
+Role writes take `{name, description, permissions}`. Prerequisites `deviations.view` and
+`users.view` are automatically included when dependent permissions are selected.
+
+Deploy backend and frontend together: back up the database, enter Laravel maintenance mode,
+upload the backend, run `php artisan migrate --force` and `php artisan optimize:clear`, upload
+the new frontend build into `public`, then `php artisan up`. On REG.RU invoke artisan with
+`/opt/php/8.4/bin/php`. No new Composer/NPM dependencies are required. The portal parser code is unchanged.
+Reload existing browser tabs so their navigation and user-management forms use the new API.
+
+Checks: `php artisan test --filter='RoleAccessTest|AccountApiTest|DeviationApiTest'`;
+frontend `tests/roles.browser.mjs` exercises the UI against mocked APIs in Vite preview.
 
 ## Internal API service token
 

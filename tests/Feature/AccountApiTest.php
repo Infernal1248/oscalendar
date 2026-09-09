@@ -43,6 +43,8 @@ class AccountApiTest extends TestCase
             'status' => 'active',
         ]);
 
+        $this->grantPermissions($user, ['dashboard.view', 'profile.view']);
+
         $token = $this->postJson('/api/auth/login', ['login' => '124312', 'password' => 'secret'])
             ->assertOk()
             ->assertJsonPath('user.display_name', 'Web User')
@@ -70,7 +72,7 @@ class AccountApiTest extends TestCase
             'password' => 'strong-password',
         ])
             ->assertOk()
-            ->assertJsonPath('user.navigation.1', 'admin.users')
+            ->assertJsonPath('user.users_access.assign_roles', true)
             ->assertJsonMissingPath('user.role')
             ->assertJsonMissingPath('user.permissions');
     }
@@ -82,6 +84,8 @@ class AccountApiTest extends TestCase
             'permissions' => ['profile.view', 'deviations.view', 'deviations.read'],
         ]);
         $owner = User::create(['display_name' => 'Ромарио', 'permissions' => ['profile.view']]);
+        $this->grantPermissions($developer, ['profile.view', 'deviations.view', 'deviations.read']);
+        $this->grantPermissions($owner, ['profile.view']);
         foreach ([$developer, $owner] as $user) {
             $user->portalCredentials()->create([
                 'portal' => 'rossiya_edu', 'login' => 'shared-portal',
@@ -170,11 +174,11 @@ class AccountApiTest extends TestCase
 
         $this->actingAs($admin)->patchJson("/api/admin/users/{$user->id}", [
             'status' => 'blocked',
-            'permissions' => [],
+            'role_ids' => [],
         ])
             ->assertOk()
             ->assertJsonPath('status', 'blocked')
-            ->assertJsonPath('permissions.0', 'profile.view');
+            ->assertJsonPath('permissions', []);
 
         $this->assertDatabaseHas('users', [
             'id' => $user->id,

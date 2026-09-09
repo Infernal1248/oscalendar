@@ -47,28 +47,28 @@ class DeviationApiTest extends TestCase
         $this->getJson('/api/deviations')->assertForbidden();
         $this->postJson('/api/deviations/import')->assertForbidden();
 
-        $user->update(['permissions' => ['deviations.view']]);
+        $this->grantPermissions($user, ['deviations.view']);
         $this->getJson('/api/account')->assertJsonFragment(['navigation' => ['profile', 'deviations']]);
         $this->getJson('/api/deviations')->assertForbidden();
         $this->postJson('/api/deviations/import')->assertForbidden();
-        $user->update(['permissions' => ['deviations.view', 'deviations.read']]);
+        $this->grantPermissions($user, ['deviations.view', 'deviations.read']);
         $this->getJson('/api/deviations')->assertOk();
         $this->postJson('/api/deviations/import')->assertForbidden();
-        $user->update(['permissions' => ['deviations.view', 'deviations.import']]);
+        $this->grantPermissions($user, ['deviations.view', 'deviations.import']);
         $this->postJson('/api/deviations/import')->assertUnprocessable()->assertJsonValidationErrors('file');
         $this->getJson('/api/deviations')->assertForbidden();
-        $user->update(['permissions' => ['deviations.read', 'deviations.import']]);
+        $this->grantPermissions($user, ['deviations.read', 'deviations.import']);
         $this->getJson('/api/deviations')->assertForbidden();
         $this->postJson('/api/deviations/import')->assertForbidden();
         $this->patchJson("/api/admin/users/{$user->id}", ['status' => 'active', 'permissions' => ['deviations.view']])->assertForbidden();
 
         $admin = User::create(['role' => 'admin', 'status' => 'active']);
         $this->actingAs($admin)->getJson('/api/account')
-            ->assertJsonPath('navigation', ['profile', 'admin.users', 'admin.permissions'])
+            ->assertJsonPath('users_access.assign_roles', true)
             ->assertJsonPath('deviations_access.read', true)->assertJsonPath('deviations_access.import', true);
         $this->getJson('/api/admin/permissions')->assertJsonFragment(['key' => 'deviations.import', 'assignable' => true]);
         $this->patchJson("/api/admin/users/{$user->id}", [
-            'status' => 'active', 'permissions' => ['deviations.view', 'deviations.read', 'deviations.import'],
+            'status' => 'active', 'role_ids' => [\App\Models\Role::where('key', 'deviations-importer')->sole()->id],
         ])->assertOk();
         $this->actingAs($user->fresh())->getJson('/api/deviations')->assertOk();
         $user->update(['status' => 'blocked']);
@@ -89,6 +89,7 @@ class DeviationApiTest extends TestCase
         $this->assertDatabaseCount('deviations', 3);
 
         $reader = User::create(['permissions' => ['deviations.view', 'deviations.read'], 'status' => 'active']);
+        $this->grantPermissions($reader, ['deviations.view', 'deviations.read']);
         $this->actingAs($reader)->getJson('/api/deviations')->assertOk()->assertJsonPath('total', 3)
             ->assertJsonMissingPath('data.0.fingerprint')->assertJsonMissingPath('data.0.uploaded_by');
     }
@@ -140,7 +141,7 @@ class DeviationApiTest extends TestCase
 
     public function test_column_rules_are_combined_and_validated_on_the_server(): void
     {
-        $this->actingAs(User::create(['status' => 'active', 'permissions' => ['deviations.view', 'deviations.read', 'deviations.import']]));
+        $this->actingAs($this->grantPermissions(User::create(['status' => 'active']), ['deviations.view', 'deviations.read', 'deviations.import']));
         $this->postJson('/api/deviations/import', ['file' => $this->file([
             $this->group(1004, 2), $this->detail('2025-12-05'), $this->detail('2025-12-07'),
             $this->group(1023, 1), $this->detail('2025-12-06'),

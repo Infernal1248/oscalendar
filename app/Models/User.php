@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
@@ -45,10 +46,40 @@ class User extends Authenticatable
         'permissions' => 'array',
     ];
 
+    protected static function booted(): void
+    {
+        static::created(function (User $user) {
+            $user->refresh();
+            $user->roles()->attach(Role::where('key', $user->role === 'admin' ? 'administrator' : 'user')->sole()->id);
+        });
+    }
+
+    public function roles(): BelongsToMany
+    {
+        return $this->belongsToMany(Role::class);
+    }
+
+    public function isAdmin(): bool
+    {
+        return $this->roles->contains('key', 'administrator');
+    }
+
+    public function effectivePermissions(): array
+    {
+        if ($this->status !== 'active') {
+            return [];
+        }
+        if ($this->isAdmin()) {
+            return array_keys(config('permissions.catalog'));
+        }
+
+        return $this->roles->flatMap(fn (Role $role) => $role->permissions)
+            ->push('profile.view')->unique()->values()->all();
+    }
+
     public function hasPermission(string $permission): bool
     {
-        return $this->role === 'admin'
-            || in_array($permission, $this->permissions ?? config('permissions.defaults'), true);
+        return in_array($permission, $this->effectivePermissions(), true);
     }
 
     public function telegramAccounts(): HasMany
