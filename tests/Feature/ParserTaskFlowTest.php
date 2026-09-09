@@ -320,6 +320,95 @@ class ParserTaskFlowTest extends TestCase
             && str_contains((string) $request['text'], 'Доступ одобрен'));
     }
 
+    public function test_expired_worker_cannot_renew_a_task_reassigned_to_another_vm(): void
+    {
+        Carbon::setTestNow('2026-09-09 12:00:00');
+        $user = User::query()->create(['display_name' => 'Heartbeat User']);
+        PortalCredential::query()->create([
+            'user_id' => $user->id, 'portal' => 'rossiya_edu', 'login' => 'test',
+            'password_encrypted' => Crypt::encryptString('test'), 'status' => 'active',
+        ]);
+        $oldJob = $this->claim()->assertOk()->json('job');
+        $oldRun = SyncRun::findOrFail($oldJob['sync_run_id']);
+        $oldWorker = 'vm-1:worker-'.$oldRun->id;
+        $oldUrl = '/api/internal/parser-jobs/'.$oldRun->id.'/heartbeat';
+        Carbon::setTestNow('2026-09-09 12:01:00');
+        $this->withToken($this->token)->postJson($oldUrl, ['locked_by' => $oldWorker, 'lock_seconds' => 60])->assertOk();
+        $this->assertSame($oldWorker, $oldRun->fresh()->worker_id);
+        $this->assertSame($oldWorker, ParserTask::findOrFail($oldJob['task_id'])->locked_by);
+
+        // An expired lease must not be revived, even before the next VM claims it.
+        Carbon::setTestNow('2026-09-09 12:02:00');
+        $oldState = $oldRun->fresh()->getAttributes();
+        $this->postJson($oldUrl, ['locked_by' => $oldWorker])->assertStatus(409);
+        $this->assertSame($oldState, $oldRun->fresh()->getAttributes());
+
+        $newJob = $this->withToken($this->token)->postJson('/api/internal/parser-jobs/claim', [
+            'source' => 'rossiya_edu', 'portal' => 'rossiya_edu',
+            'locked_by' => 'vm-2:supervisor', 'lock_seconds' => 900,
+            'capabilities' => ['typed_tasks_v1', 'roster_acknowledgement_v1'],
+        ])->assertOk()->json('job');
+        $this->assertSame($oldJob['task_id'], $newJob['task_id']);
+        $this->assertNotSame($oldRun->id, $newJob['sync_run_id']);
+        $this->assertSame($oldJob['attempt'] + 1, $newJob['attempt']);
+        $this->assertSame('failed', $oldRun->fresh()->status);
+
+        $newRun = SyncRun::findOrFail($newJob['sync_run_id']);
+        $newUrl = '/api/internal/parser-jobs/'.$newRun->id.'/heartbeat';
+        $newWorker = 'vm-2:worker-'.$newRun->id;
+        $this->postJson($newUrl, ['locked_by' => $newWorker])->assertOk();
+        $task = ParserTask::findOrFail($newJob['task_id']);
+        $taskState = $task->getAttributes();
+        $runState = $newRun->fresh()->getAttributes();
+        $oldState = $oldRun->fresh()->getAttributes();
+
+        $this->postJson($oldUrl, ['locked_by' => $oldWorker, 'lock_seconds' => 7200])->assertStatus(409);
+        $this->postJson($newUrl, ['locked_by' => $oldWorker, 'lock_seconds' => 7200])->assertStatus(409);
+        $this->assertSame($taskState, $task->fresh()->getAttributes());
+        $this->assertSame($runState, $newRun->fresh()->getAttributes());
+        $this->assertSame($oldState, $oldRun->fresh()->getAttributes());
+
+        Carbon::setTestNow('2026-09-09 12:03:00');
+        $this->postJson($newUrl, ['locked_by' => $newWorker])->assertOk();
+        $this->assertTrue($newRun->fresh()->lock_expires_at->equalTo(now()->addSeconds(900)));
+        $this->finish($newRun->id);
+        $taskState = $task->fresh()->getAttributes();
+        $runState = $newRun->fresh()->getAttributes();
+        $this->postJson($newUrl, ['locked_by' => $newWorker])->assertStatus(409);
+        $this->assertSame($taskState, $task->fresh()->getAttributes());
+        $this->assertSame($runState, $newRun->fresh()->getAttributes());
+    }
+
+    public function test_heartbeat_checks_task_attempt_owner_status_and_expiry_before_any_write(): void
+    {
+        Carbon::setTestNow('2026-09-09 12:00:00');
+        $user = User::query()->create(['display_name' => 'Heartbeat User']);
+        PortalCredential::query()->create([
+            'user_id' => $user->id, 'portal' => 'rossiya_edu', 'login' => 'test',
+            'password_encrypted' => Crypt::encryptString('test'), 'status' => 'active',
+        ]);
+        $job = $this->claim()->assertOk()->json('job');
+        $run = SyncRun::findOrFail($job['sync_run_id']);
+        $task = ParserTask::findOrFail($job['task_id']);
+        $original = $task->getAttributes();
+        $runState = $run->getAttributes();
+        foreach ([
+            ['attempts' => $task->attempts + 1],
+            ['locked_by' => 'another-vm'],
+            ['status' => 'scheduled'],
+            ['lock_expires_at' => now()],
+            ['lock_expires_at' => null],
+        ] as $change) {
+            $task->setRawAttributes($original)->forceFill($change)->save();
+            $taskState = $task->fresh()->getAttributes();
+            $this->withToken($this->token)->postJson('/api/internal/parser-jobs/'.$run->id.'/heartbeat', [
+                'locked_by' => 'vm-1:worker-'.$run->id,
+            ])->assertStatus(409);
+            $this->assertSame($runState, $run->fresh()->getAttributes());
+            $this->assertSame($taskState, $task->fresh()->getAttributes());
+        }
+    }
+
     private function sendRosterChunk(array $job, User $user, array $item, array $changeState): void
     {
         $this->withToken($this->token)

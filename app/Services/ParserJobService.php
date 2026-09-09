@@ -8,6 +8,7 @@ use App\Models\SyncRun;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 class ParserJobService
 {
@@ -68,11 +69,33 @@ class ParserJobService
     public function heartbeat(SyncRun $syncRun, array $data): SyncRun
     {
         $lockSeconds = (int) ($data['lock_seconds'] ?? 900);
-        $now = now();
-        $lockedBy = $data['locked_by'] ?? $syncRun->locked_by;
 
-        return DB::transaction(function () use ($syncRun, $lockSeconds, $now, $lockedBy) {
+        return DB::transaction(function () use ($syncRun, $lockSeconds, $data) {
             $syncRun = SyncRun::query()->lockForUpdate()->findOrFail($syncRun->id);
+            $task = $syncRun->parser_task_id
+                ? ParserTask::query()->lockForUpdate()->find($syncRun->parser_task_id)
+                : null;
+            // Check the time after acquiring both locks, not before waiting for them.
+            $now = now();
+            if ($syncRun->status !== 'running'
+                || ! $syncRun->lock_expires_at?->greaterThan($now)) {
+                throw new ConflictHttpException('The sync run lease is expired or closed.');
+            }
+
+            if ($syncRun->parser_task_id && (! $task
+                || $task->status !== 'running'
+                || $task->attempts !== $syncRun->attempt
+                || $task->locked_by !== $syncRun->locked_by
+                || ! $task->lock_expires_at?->greaterThan($now))) {
+                throw new ConflictHttpException('The parser task is no longer owned by this sync run.');
+            }
+
+            $lockedBy = $data['locked_by'] ?? $syncRun->locked_by;
+            // The first heartbeat transfers the claim from supervisor to worker.
+            if ($syncRun->worker_id !== null && $syncRun->worker_id !== $lockedBy) {
+                throw new ConflictHttpException('The sync run belongs to another worker.');
+            }
+
             $syncRun->forceFill([
                 'heartbeat_at' => $now,
                 'lock_expires_at' => $now->copy()->addSeconds($lockSeconds),
@@ -80,18 +103,15 @@ class ParserJobService
                 'worker_id' => $syncRun->worker_id ?: $lockedBy,
             ])->save();
 
-            if ($syncRun->parser_task_id) {
-                ParserTask::query()
-                    ->whereKey($syncRun->parser_task_id)
-                    ->where('status', 'running')
-                    ->update([
-                        'lock_expires_at' => $now->copy()->addSeconds($lockSeconds),
-                        'locked_by' => $lockedBy,
-                    ]);
+            if ($task) {
+                $task->forceFill([
+                    'lock_expires_at' => $now->copy()->addSeconds($lockSeconds),
+                    'locked_by' => $lockedBy,
+                ])->save();
             }
 
             return $syncRun;
-        });
+        }, 3);
     }
 
     private function claimDueTask(
@@ -263,7 +283,7 @@ class ParserJobService
             ->where('source', $source)
             ->where('status', 'running')
             ->whereNotNull('lock_expires_at')
-            ->where('lock_expires_at', '<', $now)
+            ->where('lock_expires_at', '<=', $now)
             ->limit(50)
             ->pluck('id');
 
@@ -276,7 +296,7 @@ class ParserJobService
             $task = ParserTask::query()
                 ->whereKey($taskId)
                 ->where('status', 'running')
-                ->where('lock_expires_at', '<', $now)
+                ->where('lock_expires_at', '<=', $now)
                 ->lockForUpdate()
                 ->first();
             if (! $task) {

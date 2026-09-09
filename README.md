@@ -42,6 +42,27 @@ php artisan internal-token:create parser-vm --ability=sync-result
 
 The command prints the plain token once. Store it on the parser VM. The database stores only `token_hash` in `internal_api_tokens`.
 
+For a second VM, run this **on the Laravel host, inside the oscalendar directory**:
+
+```bash
+php artisan internal-token:create parser-vm-2
+```
+
+Put the printed token in the second VM's parser `.env` as `INTERNAL_API_TOKEN`
+and set `LOCKED_BY_PREFIX=parser-vm-2` (different from the first VM). Keep the
+same backend URL and parser source. Restart the second VM's supervisor after
+editing its environment. Creating a new token does not replace or revoke the
+first token. Tokens and `.env` files must not be committed or posted in logs.
+The optional `--ability` values are currently metadata, not enforced access scopes.
+
+Heartbeat renewal returns HTTP 409 without modifying the run or task when the
+run is closed, either lease has expired, or task status/attempt/owner no longer
+matches the run. The first heartbeat may transfer a supervisor claim to its
+worker; later heartbeats cannot change that worker's identity. Expiry is checked
+after locking the run and task in a transaction. An expired lease cannot be
+revived even before another VM claims the task. This guards lease renewal, not
+remote cancellation of portal requests already executing on the old VM.
+
 Every internal request must include:
 
 ```http
