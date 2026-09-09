@@ -234,7 +234,7 @@ class AccountController extends Controller
                 'import' => $user->hasPermission('deviations.view') && $user->hasPermission('deviations.import'),
             ],
             'navigation' => $user->role === 'admin'
-                ? ['profile', 'admin.users', 'admin.permissions', 'deviations']
+                ? ['profile', 'admin.users', 'admin.permissions']
                 : array_values(array_filter([
                     'profile',
                     in_array('dashboard.view', $permissions, true) ? 'dashboard' : null,

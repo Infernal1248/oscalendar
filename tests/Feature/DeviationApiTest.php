@@ -63,7 +63,9 @@ class DeviationApiTest extends TestCase
         $this->patchJson("/api/admin/users/{$user->id}", ['status' => 'active', 'permissions' => ['deviations.view']])->assertForbidden();
 
         $admin = User::create(['role' => 'admin', 'status' => 'active']);
-        $this->actingAs($admin)->getJson('/api/account')->assertJsonPath('deviations_access.read', true)->assertJsonPath('deviations_access.import', true);
+        $this->actingAs($admin)->getJson('/api/account')
+            ->assertJsonPath('navigation', ['profile', 'admin.users', 'admin.permissions'])
+            ->assertJsonPath('deviations_access.read', true)->assertJsonPath('deviations_access.import', true);
         $this->getJson('/api/admin/permissions')->assertJsonFragment(['key' => 'deviations.import', 'assignable' => true]);
         $this->patchJson("/api/admin/users/{$user->id}", [
             'status' => 'active', 'permissions' => ['deviations.view', 'deviations.read', 'deviations.import'],
