@@ -45,7 +45,7 @@ class AdminUserController extends Controller
             ->all();
         $data = $request->validate([
             'status' => ['required', Rule::in(['active', 'pending', 'blocked', 'banned'])],
-            'permissions' => ['required', 'array'],
+            'permissions' => ['present', 'array'],
             'permissions.*' => ['string', Rule::in($assignable)],
         ]);
 

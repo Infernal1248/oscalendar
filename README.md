@@ -2,6 +2,36 @@
 
 Laravel backend for parser sync, Telegram bot state, and private calendar feeds.
 
+## AirFASE deviations
+
+Shared database, independent of the portal parser. Deploy the backend before the frontend:
+
+```bash
+composer install --no-dev --optimize-autoloader
+php artisan migrate --force
+php artisan optimize:clear
+```
+
+PhpSpreadsheet requires PHP extensions including `gd`, `zip`, `mbstring`, `dom`, `xmlreader` and `xmlwriter`; Composer checks the complete requirements. Configure PHP `upload_max_filesize` to at least `10M`, `post_max_size` above `10M`, and the web server body limit accordingly.
+
+Administrators have access automatically. Grant ordinary users these permissions through **Пользователи → Настроить** (none are enabled by default):
+
+- `deviations.view`: page/navigation.
+- `deviations.read`: shared table, requires `deviations.view`.
+- `deviations.import`: upload, requires `deviations.view` but not `deviations.read`.
+
+Authenticated API:
+
+- `POST /api/deviations/import`: multipart `file`, XLS/XLSX AirFASE report, up to 10 MiB. Returns `processed`, `inserted`, `duplicates`. Required headers are defined in `Deviation::COLUMNS`; event number/text/report count are inherited from group headings. Invalid rows reject the entire import. Formulas are not executed or accepted. The uploaded workbook is not archived: only normalized rows, original filename and uploader are stored.
+- `GET /api/deviations`: Laravel pagination (`data`, `total`, `current_page`, `last_page`, `per_page`). `page` defaults to 1, `per_page` to 50 (maximum 500). `sort_by` defaults to `flight_date`, `sort_order` to `desc`. `group_by` orders groups on the server, then the selected sort orders rows inside each group. Groups may continue across pages.
+- Filters: `date_from` / `date_to` in `YYYY-MM-DD`, plus `filters[field]` for any field in `Deviation::COLUMNS`. Text filters use literal substring matching, date and report count use equality; all conditions combine with AND. Sorting/grouping fields are allowlisted to the same columns.
+
+Example: `/api/deviations?date_from=2025-12-01&date_to=2025-12-09&filters[event_number]=1004&group_by=aircraft_registration&sort_by=flight_date&sort_order=desc&per_page=100`.
+
+Deduplication uses a unique SHA-256 key over the normalized event fields, excluding the report count, filename, uploader and import timestamps. Thus weekly/monthly overlap is skipped even if report totals differ. The first report count is retained as source metadata, not a live count of filtered results. The export has no unique occurrence ID: identical event rows are considered the same occurrence; rows with different actual values remain distinct. A malformed file does not modify existing records.
+
+Run the API/import checks with `php artisan test --filter=DeviationApiTest`. Optionally set `AIRFASE_SAMPLE` to a local AirFASE export to test importing it twice against an in-memory test database; personal exports are not committed.
+
 ## Internal API service token
 
 Create a token for the parser VM:

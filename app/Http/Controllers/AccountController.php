@@ -229,13 +229,18 @@ class AccountController extends Controller
             'display_name' => $user->display_name,
             'timezone' => $user->timezone,
             'calendar_url' => $calendarUrl,
+            'deviations_access' => [
+                'read' => $user->hasPermission('deviations.view') && $user->hasPermission('deviations.read'),
+                'import' => $user->hasPermission('deviations.view') && $user->hasPermission('deviations.import'),
+            ],
             'navigation' => $user->role === 'admin'
-                ? ['profile', 'admin.users', 'admin.permissions']
+                ? ['profile', 'admin.users', 'admin.permissions', 'deviations']
                 : array_values(array_filter([
                     'profile',
                     in_array('dashboard.view', $permissions, true) ? 'dashboard' : null,
                     in_array('workplan.view', $permissions, true) ? 'workplan' : null,
                     in_array('history.view', $permissions, true) ? 'history' : null,
+                    in_array('deviations.view', $permissions, true) ? 'deviations' : null,
                 ])),
         ];
     }

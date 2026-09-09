@@ -3,6 +3,7 @@
 use App\Http\Controllers\CalendarFeedController;
 use App\Http\Controllers\AccountController;
 use App\Http\Controllers\AdminUserController;
+use App\Http\Controllers\DeviationController;
 use App\Http\Controllers\Internal\ParserJobController;
 use App\Http\Controllers\Internal\PartialSyncResultController;
 use App\Http\Controllers\Internal\SyncResultController;
@@ -29,6 +30,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard', [AccountController::class, 'dashboard']);
     Route::get('/workplan', [AccountController::class, 'workplan']);
     Route::get('/change-history', [AccountController::class, 'changeHistory']);
+    Route::get('/deviations', [DeviationController::class, 'index']);
+    Route::post('/deviations/import', [DeviationController::class, 'import'])->middleware('throttle:10,1');
     Route::get('/workplan/flights/{flightSegment}', [AccountController::class, 'flight']);
     Route::get('/admin/users', [AdminUserController::class, 'index']);
     Route::patch('/admin/users/{user}', [AdminUserController::class, 'update']);
