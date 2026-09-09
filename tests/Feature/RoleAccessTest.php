@@ -74,6 +74,25 @@ class RoleAccessTest extends TestCase
         $this->deleteJson("/api/admin/roles/{$roleId}")->assertForbidden();
     }
 
+    public function test_user_list_excludes_administrator_role_regardless_of_legacy_role_or_status(): void
+    {
+        $admin = User::create(['role' => 'admin']);
+        $promoted = User::create(['role' => 'user', 'status' => 'blocked']);
+        $promoted->roles()->attach(Role::where('key', 'administrator')->sole()->id);
+        $user = User::create(['status' => 'pending']);
+        $viewer = User::create([]);
+        $viewer->roles()->sync([Role::where('key', 'users-reader')->sole()->id]);
+        $manager = User::create([]);
+        $manager->roles()->sync([Role::where('key', 'users-manager')->sole()->id]);
+
+        foreach ([$admin, $viewer, $manager] as $actor) {
+            $response = $this->actingAs($actor)->getJson('/api/admin/users')->assertOk();
+            $this->assertEqualsCanonicalizing([$user->id, $viewer->id, $manager->id], $response->json('*.id'));
+        }
+        $this->assertDatabaseHas('users', ['id' => $admin->id]);
+        $this->assertDatabaseHas('role_user', ['user_id' => $promoted->id, 'role_id' => Role::where('key', 'administrator')->sole()->id]);
+    }
+
     public function test_protected_roles_last_admin_and_blocked_accounts(): void
     {
         $admin = User::create(['role' => 'admin']);

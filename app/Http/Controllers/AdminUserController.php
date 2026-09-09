@@ -16,6 +16,7 @@ class AdminUserController extends Controller
         abort_unless($request->user()->hasPermission('users.view'), 403);
 
         return response()->json(User::query()
+            ->whereDoesntHave('roles', fn ($query) => $query->where('key', 'administrator'))
             ->with(['roles', 'portalCredentials:id,user_id,login,status', 'telegramAccounts:id,user_id,telegram_id,username'])
             ->orderByRaw("CASE WHEN status = 'pending' THEN 0 ELSE 1 END")
             ->orderBy('display_name')->orderBy('id')->get()
