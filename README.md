@@ -2,6 +2,35 @@
 
 Laravel backend for parser sync, Telegram bot state, and private calendar feeds.
 
+## Frontend on the same domain
+
+Build in `oscalendar-front` (Node.js 24+):
+
+```bash
+npm ci
+VITE_API_URL=/api npm run build -- --base=/
+```
+
+Upload the contents of `dist/` into Laravel's `public/`: `public/index.html` and `public/assets/`.
+Keep the existing `public/index.php`, `.htaccess`, and other backend files. Upload assets before
+replacing `index.html`; keep previous hashed assets during the deployment for already-open tabs.
+The generated frontend files are not committed to the backend repository.
+
+The domain document root should point to Laravel's `public/`. Keep `index.php` first in the
+index-file list. The web routes serve `public/index.html` for `/` and the known cabinet pages,
+including direct visits/reloads; `/api/*` remains the backend. If the build is missing, these
+pages return 503 rather than the Laravel welcome page. Unknown URLs and missing assets return 404.
+
+After deploying updated backend routes, clear any previous route cache in the project directory.
+For REG.RU with PHP 8.4:
+
+```bash
+/opt/php/8.4/bin/php artisan route:clear
+```
+
+Check `/`, `/login`, and a reload on `/deviations`. An unauthenticated request to `/api/account`
+with `Accept: application/json` must still return 401, not the frontend HTML.
+
 ## AirFASE deviations
 
 Shared database, independent of the portal parser. Deploy the backend before the frontend:
