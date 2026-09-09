@@ -363,6 +363,16 @@ php artisan account:make-admin oscalendar-admin --name="Administrator"
 
 The command asks for the password without displaying or storing it in shell history.
 
+An existing test user can have a separate local web login while keeping another user's portal credentials for parsing:
+
+```bash
+php artisan account:set-local-login @Infernal1248 oscalendar-vladimir
+```
+
+Run this on the Laravel server. The first argument may instead be the exact `users.id`. The command requires an unambiguous existing user, displays their ID/name for confirmation, and asks for a password of at least 12 characters twice. It does not create a user, grant admin rights, unblock the user, or change portal credentials, Telegram links, permissions, calendar links or schedule data. Existing web tokens for that user are revoked. Running it again also changes the local password.
+
+Users with a local login authenticate only with that login, not with portal credentials. Other users retain portal login. Thus after assigning a local login to the test user, their shared portal login resolves to the remaining ordinary user. If more than one eligible user still shares a portal login, web login is rejected instead of choosing the first record. Assign the local login immediately after deploying this change to restore the shared portal user's login. No migration or parser/frontend update is needed.
+
 User flow:
 
 1. User sends `/start`.

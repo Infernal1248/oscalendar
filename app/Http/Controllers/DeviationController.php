@@ -23,9 +23,23 @@ class DeviationController extends Controller
             'date_from' => ['nullable', 'date_format:Y-m-d'],
             'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
             'filters' => ['sometimes', 'array:'.implode(',', $columns)],
+            'filter_rules' => ['sometimes', 'array:'.implode(',', $columns)],
+            'filter_rules.*' => ['required', 'array:operator,constraints'],
+            'filter_rules.*.operator' => ['required', Rule::in(['and', 'or'])],
+            'filter_rules.*.constraints' => ['required', 'array', 'min:1', 'max:5'],
+            'filter_rules.*.constraints.*' => ['required', 'array:matchMode,value'],
         ];
         foreach ($columns as $column) {
             $rules['filters.'.$column] = ['nullable', 'string', 'max:255'];
+            $comparable = in_array($column, ['flight_date', 'report_event_count'], true);
+            $rules['filter_rules.'.$column.'.constraints.*.matchMode'] = ['required', Rule::in($comparable
+                ? ['equals', 'notEquals', 'lt', 'lte', 'gt', 'gte']
+                : ['contains', 'notContains', 'startsWith', 'endsWith', 'equals', 'notEquals'])];
+            $rules['filter_rules.'.$column.'.constraints.*.value'] = match ($column) {
+                'flight_date' => ['required', 'date_format:Y-m-d'],
+                'report_event_count' => ['required', 'integer', 'min:0'],
+                default => ['required', 'string', 'max:255'],
+            };
         }
         $rules['filters.report_event_count'] = ['nullable', 'integer', 'min:0'];
         $rules['filters.flight_date'] = ['nullable', 'date_format:Y-m-d'];
@@ -41,6 +55,24 @@ class DeviationController extends Controller
                     $query->whereRaw("{$column} LIKE ? ESCAPE '!'", [$pattern]);
                 }
             }
+        }
+        // AND between columns; each column groups its own AND/OR rules.
+        foreach ($data['filter_rules'] ?? [] as $column => $filter) {
+            $query->where(function ($group) use ($column, $filter) {
+                foreach ($filter['constraints'] as $constraint) {
+                    $mode = $constraint['matchMode'];
+                    $value = $constraint['value'];
+                    $operators = ['equals' => '=', 'notEquals' => '!=', 'lt' => '<', 'lte' => '<=', 'gt' => '>', 'gte' => '>='];
+                    if (isset($operators[$mode])) {
+                        $group->where($column, $operators[$mode], $value, $filter['operator']);
+                    } else {
+                        $escaped = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $value);
+                        $pattern = ($mode === 'startsWith' ? '' : '%').$escaped.($mode === 'endsWith' ? '' : '%');
+                        $operator = $mode === 'notContains' ? 'NOT LIKE' : 'LIKE';
+                        $group->whereRaw("{$column} {$operator} ? ESCAPE '!'", [$pattern], $filter['operator']);
+                    }
+                }
+            });
         }
         if (! empty($data['date_from'])) {
             $query->where('flight_date', '>=', $data['date_from']);

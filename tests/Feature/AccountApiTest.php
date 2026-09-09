@@ -75,6 +75,92 @@ class AccountApiTest extends TestCase
             ->assertJsonMissingPath('user.permissions');
     }
 
+    public function test_local_test_account_is_separated_from_the_shared_portal_login(): void
+    {
+        $developer = User::create([
+            'display_name' => 'Владимир', 'timezone' => 'Asia/Krasnoyarsk',
+            'permissions' => ['profile.view', 'deviations.view', 'deviations.read'],
+        ]);
+        $owner = User::create(['display_name' => 'Ромарио', 'permissions' => ['profile.view']]);
+        foreach ([$developer, $owner] as $user) {
+            $user->portalCredentials()->create([
+                'portal' => 'rossiya_edu', 'login' => 'shared-portal',
+                'password_encrypted' => Crypt::encryptString('portal-password'), 'status' => 'active',
+            ]);
+        }
+        $developer->telegramAccounts()->create(['telegram_id' => 101, 'username' => 'Infernal1248']);
+        $roster = $developer->rosterItems()->create(['source' => 'rossiya_edu', 'kind' => 'flight_ring', 'starts_at' => now()]);
+        $portalData = $developer->portalCredentials()->first()->getAttributes();
+        $userData = $developer->fresh()->only(['role', 'status', 'permissions', 'timezone', 'display_name']);
+        $oldWebToken = $developer->createToken('web')->accessToken;
+        $ownerToken = $owner->createToken('web')->accessToken;
+
+        $this->postJson('/api/auth/login', ['login' => 'shared-portal', 'password' => 'portal-password'])
+            ->assertUnprocessable()->assertJsonMissingPath('token');
+
+        $this->artisan('account:set-local-login', ['user' => '@Infernal1248', 'login' => 'oscalendar-vladimir'])
+            ->expectsConfirmation("Set local login for user #{$developer->id} (Владимир)?", 'yes')
+            ->expectsQuestion('Password (minimum 12 characters)', 'local-test-password')
+            ->expectsQuestion('Confirm password', 'local-test-password')
+            ->assertSuccessful();
+
+        $this->assertSame($portalData, $developer->portalCredentials()->first()->getAttributes());
+        $this->assertSame($userData, $developer->fresh()->only(array_keys($userData)));
+        $this->assertTrue(Hash::check('local-test-password', $developer->fresh()->password));
+        $this->assertSame(1, $developer->telegramAccounts()->count());
+        $this->assertSame($roster->id, $developer->rosterItems()->first()->id);
+        $this->assertDatabaseCount('users', 2);
+        $this->assertDatabaseMissing('personal_access_tokens', ['id' => $oldWebToken->id]);
+        $this->assertDatabaseHas('personal_access_tokens', ['id' => $ownerToken->id]);
+        $this->assertNull($owner->fresh()->login);
+
+        $this->postJson('/api/auth/login', ['login' => 'shared-portal', 'password' => 'portal-password'])
+            ->assertOk()->assertJsonPath('user.id', $owner->id);
+        $this->postJson('/api/auth/login', ['login' => 'oscalendar-vladimir', 'password' => 'local-test-password'])
+            ->assertOk()->assertJsonPath('user.id', $developer->id)
+            ->assertJsonPath('user.navigation', ['profile', 'deviations'])
+            ->assertJsonMissingPath('user.role')->assertJsonMissingPath('user.permissions');
+        $this->postJson('/api/auth/login', ['login' => 'oscalendar-vladimir', 'password' => 'portal-password'])->assertUnprocessable();
+        $this->postJson('/api/auth/login', ['login' => 'shared-portal', 'password' => 'local-test-password'])->assertUnprocessable();
+        foreach (['blocked', 'banned', 'pending'] as $status) {
+            $developer->update(['status' => $status]);
+            $this->postJson('/api/auth/login', ['login' => 'oscalendar-vladimir', 'password' => 'local-test-password'])->assertUnprocessable();
+        }
+        $owner->update(['status' => 'blocked']);
+        $this->postJson('/api/auth/login', ['login' => 'shared-portal', 'password' => 'portal-password'])->assertUnprocessable();
+    }
+
+    public function test_local_login_command_validates_target_collisions_and_password_before_writing(): void
+    {
+        $user = User::create(['display_name' => 'Test', 'status' => 'blocked']);
+        $user->portalCredentials()->create([
+            'portal' => 'rossiya_edu', 'login' => 'portal-login',
+            'password_encrypted' => Crypt::encryptString('portal-password'), 'status' => 'active',
+        ]);
+        $admin = User::create(['role' => 'admin', 'login' => 'existing-admin']);
+        $token = $user->createToken('web')->accessToken;
+        foreach ([['missing', 'test-login'], ['@missing', 'test-login'], ['999999', 'test-login'],
+            [$user->id, 'portal-login'], [$user->id, 'existing-admin'], [$admin->id, 'test-login']] as [$target, $login]) {
+            $this->artisan('account:set-local-login', ['user' => $target, 'login' => $login])->assertFailed();
+        }
+        foreach ([['short', 'short'], ['long-password-1', 'long-password-2']] as [$password, $confirmation]) {
+            $this->artisan('account:set-local-login', ['user' => $user->id, 'login' => 'test-login'])
+                ->expectsConfirmation("Set local login for user #{$user->id} (Test)?", 'yes')
+                ->expectsQuestion('Password (minimum 12 characters)', $password)
+                ->expectsQuestion('Confirm password', $confirmation)
+                ->assertFailed();
+        }
+        $this->assertNull($user->fresh()->login);
+        $this->assertDatabaseHas('personal_access_tokens', ['id' => $token->id]);
+
+        $this->artisan('account:set-local-login', ['user' => $user->id, 'login' => 'test-login'])
+            ->expectsConfirmation("Set local login for user #{$user->id} (Test)?", 'yes')
+            ->expectsQuestion('Password (minimum 12 characters)', 'local-test-password')
+            ->expectsQuestion('Confirm password', 'local-test-password')
+            ->assertSuccessful();
+        $this->assertSame('blocked', $user->fresh()->status);
+    }
+
     public function test_only_admin_can_manage_user_status_and_permissions(): void
     {
         $admin = User::query()->create(['display_name' => 'Administrator', 'role' => 'admin']);

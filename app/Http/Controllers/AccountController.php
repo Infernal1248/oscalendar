@@ -29,7 +29,6 @@ class AccountController extends Controller
 
         if ($localUser) {
             if ($localUser->status === 'active'
-                && $localUser->role === 'admin'
                 && is_string($localUser->password)
                 && Hash::check($credentials['password'], $localUser->password)) {
                 return $this->authenticated($localUser);
@@ -38,13 +37,17 @@ class AccountController extends Controller
             return response()->json(['message' => 'Неверный логин или пароль.'], 422);
         }
 
-        $portalCredential = PortalCredential::query()
+        $portalCredentials = PortalCredential::query()
             ->with('user')
             ->where('portal', 'rossiya_edu')
             ->where('login', $credentials['login'])
             ->where('status', 'active')
-            ->whereHas('user', fn ($query) => $query->where('status', 'active'))
-            ->first();
+            ->whereHas('user', fn ($query) => $query->where('status', 'active')->whereNull('login')->where('role', 'user'))
+            ->limit(2)
+            ->get();
+
+        // Never select an arbitrary account when portal credentials are shared.
+        $portalCredential = $portalCredentials->count() === 1 ? $portalCredentials->first() : null;
 
         if (! $portalCredential
             || ! hash_equals(Crypt::decryptString($portalCredential->password_encrypted), $credentials['password'])) {

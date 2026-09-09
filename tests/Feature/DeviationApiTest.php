@@ -138,6 +138,46 @@ class DeviationApiTest extends TestCase
         }
     }
 
+    public function test_column_rules_are_combined_and_validated_on_the_server(): void
+    {
+        $this->actingAs(User::create(['status' => 'active', 'permissions' => ['deviations.view', 'deviations.read', 'deviations.import']]));
+        $this->postJson('/api/deviations/import', ['file' => $this->file([
+            $this->group(1004, 2), $this->detail('2025-12-05'), $this->detail('2025-12-07'),
+            $this->group(1023, 1), $this->detail('2025-12-06'),
+        ])])->assertOk();
+        $rule = fn ($mode, $value) => ['matchMode' => $mode, 'value' => $value];
+        $filter = fn ($constraints, $operator = 'and') => compact('operator', 'constraints');
+        $request = fn ($rules) => $this->getJson('/api/deviations?'.http_build_query(['filter_rules' => $rules, 'per_page' => 1]));
+
+        $request([
+            'event_number' => $filter([$rule('equals', '1004'), $rule('equals', '1023')], 'or'),
+            'flight_date' => $filter([$rule('gte', '2025-12-06'), $rule('lte', '2025-12-06')]),
+        ])->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.event_number', '1023');
+        $request(['report_event_count' => $filter([$rule('gt', '1')])])
+            ->assertOk()->assertJsonPath('total', 2)->assertJsonCount(1, 'data');
+        foreach ([['contains', 'event', 3], ['startsWith', 'Test', 3], ['endsWith', '1004', 2],
+            ['notContains', '1004', 1], ['equals', 'Test event 1004', 2], ['notEquals', 'Test event 1004', 1],
+            ['contains', '%', 0], ['contains', '_', 0], ['contains', "' OR 1=1 --", 0]] as [$mode, $value, $total]) {
+            $request(['event_text' => $filter([$rule($mode, $value)])])->assertOk()->assertJsonPath('total', $total);
+        }
+        foreach ([
+            ['unknown' => $filter([$rule('equals', 'x')])],
+            ['event_text' => $filter([$rule('contains', 'Test')], 'invalid')],
+            ['event_text' => $filter([$rule('invalid', 'Test')])],
+            ['event_text' => $filter([$rule('contains', '')])],
+            ['event_text' => $filter([$rule('contains', ['x'])])],
+            ['event_text' => $filter([$rule('contains', str_repeat('x', 256))])],
+            ['event_text' => $filter(array_fill(0, 6, $rule('contains', 'x')))],
+            ['flight_date' => $filter([$rule('gte', '2025-02-30')])],
+            ['flight_date' => $filter([$rule('contains', '2025')])],
+            ['report_event_count' => $filter([$rule('equals', '-1')])],
+            ['report_event_count' => $filter([$rule('equals', 'abc')])],
+            ['event_text' => ['constraints' => [$rule('contains', 'x')]]],
+        ] as $invalid) {
+            $request($invalid)->assertUnprocessable();
+        }
+    }
+
     public function test_actual_sample_can_be_imported_twice_without_duplicates(): void
     {
         $path = getenv('AIRFASE_SAMPLE');
