@@ -6,6 +6,7 @@ use App\Models\CalendarFeed;
 use App\Models\FlightDeferredItem;
 use App\Models\FlightSegment;
 use App\Models\PortalCredential;
+use App\Models\Role;
 use App\Models\RosterItem;
 use App\Models\RosterChangeEvent;
 use App\Models\TelegramAccount;
@@ -13,6 +14,7 @@ use App\Models\User;
 use App\Services\ParserTaskScheduler;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -97,6 +99,11 @@ class TelegramBotService
         }
 
         if ($this->handleConversation($chatId, $account, $text)) {
+            return;
+        }
+
+        if ($this->canApproveUsers($account) && in_array($text, ['/pending', 'Заявки на доступ'], true)) {
+            $this->sendPendingUsers($chatId);
             return;
         }
 
@@ -201,7 +208,7 @@ class TelegramBotService
                 return true;
             }
 
-            $this->notifyAdminsAboutPendingUser($account);
+            $this->notifyApproversAboutPendingUser($account);
             $this->sendPendingMessage($chatId, $account);
             return true;
         }
@@ -242,11 +249,6 @@ class TelegramBotService
             $this->client->sendMessage((int) $account->telegram_id, 'Доступ одобрен. Можно пользоваться меню.', [
                 'reply_markup' => $this->mainKeyboard($account),
             ]);
-            return true;
-        }
-
-        if ($text === '/pending' || $text === 'Заявки на доступ') {
-            $this->sendPendingUsers($chatId);
             return true;
         }
 
@@ -302,7 +304,7 @@ class TelegramBotService
         }
 
         if (preg_match('/^admin\.approve:(\d+)$/', $data, $matches)) {
-            if (! $this->isAdmin($account)) {
+            if (! $this->canApproveUsers($account)) {
                 $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Недостаточно прав.');
                 return;
             }
@@ -316,10 +318,22 @@ class TelegramBotService
                 return;
             }
 
-            $activated = User::query()
-                ->whereKey($pendingAccount->user_id)
-                ->where('status', 'pending')
-                ->update(['status' => 'active']);
+            $activated = DB::transaction(function () use ($account, $pendingAccount) {
+                Role::lockAdministration();
+                $actor = $account->fresh('user.roles');
+                $target = User::with('roles')->lockForUpdate()->find($pendingAccount->user_id);
+                if (! $actor || ! $this->canApproveUsers($actor)
+                    || ($target?->isAdmin() && ! $this->isAdmin($actor) && ! $actor->user->isAdmin())) {
+                    return null;
+                }
+
+                return User::query()->whereKey($pendingAccount->user_id)
+                    ->where('status', 'pending')->update(['status' => 'active']);
+            });
+            if ($activated === null) {
+                $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Недостаточно прав.');
+                return;
+            }
             if ($activated === 0) {
                 $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Заявка уже обработана.');
                 return;
@@ -541,7 +555,8 @@ class TelegramBotService
         $accounts = TelegramAccount::query()
             ->with('user')
             ->whereHas('user', function ($query) {
-                $query->where('status', 'pending');
+                $query->where('status', 'pending')
+                    ->whereDoesntHave('roles', fn ($roles) => $roles->where('key', 'administrator'));
             })
             ->orderByDesc('id')
             ->limit(20)
@@ -557,17 +572,19 @@ class TelegramBotService
         }
     }
 
-    private function notifyAdminsAboutPendingUser(TelegramAccount $pendingAccount): void
+    private function notifyApproversAboutPendingUser(TelegramAccount $pendingAccount): void
     {
-        $admins = TelegramAccount::query()
-            ->where('is_admin', true)
+        $accounts = TelegramAccount::query()
+            ->with('user.roles')
             ->whereHas('user', function ($query) {
                 $query->where('status', 'active');
             })
             ->get();
 
-        foreach ($admins as $admin) {
-            $this->sendPendingApprovalRequest((int) $admin->telegram_id, $pendingAccount);
+        foreach ($accounts as $account) {
+            if ($this->canApproveUsers($account)) {
+                $this->sendPendingApprovalRequest((int) $account->telegram_id, $pendingAccount);
+            }
         }
     }
 
@@ -596,8 +613,11 @@ class TelegramBotService
     {
         $text = "Команды:\n/start - открыть бота\n/help - помощь\n";
 
+        if ($this->canApproveUsers($account)) {
+            $text .= "\nЗаявки:\n/pending - заявки на доступ (подтверждение кнопкой «Одобрить»)\n";
+        }
         if ($this->isAdmin($account)) {
-            $text .= "\nАдмин:\n/pending - заявки\n/approve TG_ID - одобрить пользователя\n/adduser TG_ID - заранее добавить пользователя";
+            $text .= "\nАдмин:\n/approve TG_ID - одобрить пользователя\n/adduser TG_ID - заранее добавить пользователя";
         }
 
         $this->client->sendMessage($chatId, $text);
@@ -607,7 +627,7 @@ class TelegramBotService
     {
         $this->client->sendMessage(
             $chatId,
-            "Заявка сохранена и ждёт подтверждения администратором.\nВаш Telegram ID: <code>{$account->telegram_id}</code>"
+            "Заявка сохранена и ждёт подтверждения.\nВаш Telegram ID: <code>{$account->telegram_id}</code>"
         );
     }
 
@@ -778,7 +798,7 @@ class TelegramBotService
             [['text' => 'Мой календарь'], ['text' => 'Сменить пароль']],
         ];
 
-        if ($this->isAdmin($account)) {
+        if ($this->canApproveUsers($account)) {
             $keyboard[] = [['text' => 'Заявки на доступ']];
         }
 
@@ -868,6 +888,12 @@ class TelegramBotService
     private function isAdmin(TelegramAccount $account): bool
     {
         return $account->is_admin && $this->isActiveUser($account);
+    }
+
+    private function canApproveUsers(TelegramAccount $account): bool
+    {
+        return $this->isAdmin($account) || ($account->user?->hasPermission('users.view')
+            && $account->user->hasPermission('users.manage'));
     }
 
     private function isActiveUser(TelegramAccount $account): bool

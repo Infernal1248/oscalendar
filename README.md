@@ -81,7 +81,14 @@ not role assignment or modification of administrators. The administrator role ca
 the default user role cannot be deleted, and removing/blocking the last active admin is rejected.
 Assigned custom roles cannot be deleted until their members are reassigned. The console command
 `account:make-admin` continues to create/grant a system administrator for bootstrap or recovery.
-Telegram bot administration (`telegram_accounts.is_admin`) remains separate and is unchanged.
+Active users with `users.view` and `users.manage` (the “Управление пользователями” role)
+receive new registration requests in their linked Telegram accounts and can approve them
+using the inline button or open the list via `/pending` / “Заявки на доступ”. Permissions
+are checked again on approval; revoked access invalidates old buttons. Already processed,
+blocked or banned requests cannot be activated by these buttons. Managers cannot activate
+administrator accounts. Existing Telegram admins also retain approval access.
+Other bot admin commands (`/approve`, `/adduser`) still require `telegram_accounts.is_admin`;
+assigning a web role does not set this flag. No frontend rebuild or migration is required.
 
 The migration preserves existing users' exact permission sets, without automatically giving them
 new rights. Nonstandard sets become shared **Перенесённые права #…** roles that administrators can
