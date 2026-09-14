@@ -15,11 +15,11 @@ use Throwable;
 
 class DeviationImporter
 {
-    public function import(UploadedFile $file, int $userId): array
+    public function import(UploadedFile $file, int $userId, string $model = Deviation::class): array
     {
-        $records = $this->read($file->getPathname());
+        $records = $this->read($file->getPathname(), $model);
         $now = now();
-        $inserted = DB::transaction(function () use ($records, $file, $userId, $now) {
+        $inserted = DB::transaction(function () use ($records, $file, $userId, $now, $model) {
             $inserted = 0;
             foreach (array_chunk($records, 100) as $chunk) {
                 $rows = array_map(fn ($record) => $record + [
@@ -28,16 +28,19 @@ class DeviationImporter
                     'created_at' => $now,
                     'updated_at' => $now,
                 ], $chunk);
-                $inserted += DB::table('deviations')->insertOrIgnore($rows);
+                $inserted += $model::query()->insertOrIgnore($rows);
             }
 
             return $inserted;
         });
 
+        if ($inserted > 0) {
+            FlightUnitDirectory::invalidate();
+        }
         return ['processed' => count($records), 'inserted' => $inserted, 'duplicates' => count($records) - $inserted];
     }
 
-    public function read(string $path): array
+    public function read(string $path, string $model = Deviation::class): array
     {
         $book = null;
         try {
@@ -67,7 +70,7 @@ class DeviationImporter
                     }
                     if ($mapping === null) {
                         $mapping = [];
-                        foreach (Deviation::COLUMNS as $key => $label) {
+                        foreach ($model::COLUMNS as $key => $label) {
                             $index = array_search($label, $values, true);
                             if ($index === false) {
                                 $this->fail("Лист {$sheet->getTitle()}: не найдена колонка «{$label}».");
@@ -77,10 +80,11 @@ class DeviationImporter
                         continue;
                     }
                     $data = array_map(fn ($index) => $values[$index] ?? null, $mapping);
-                    if ($data['event_number'] === Deviation::COLUMNS['event_number']) {
+                    $firstField = array_key_first($model::COLUMNS);
+                    if ($data[$firstField] === $model::COLUMNS[$firstField]) {
                         continue;
                     }
-                    if ($data['event_number'] !== null) {
+                    if (isset($model::COLUMNS['event_number']) && $data['event_number'] !== null) {
                         $group = array_intersect_key($data, array_flip(['event_number', 'event_text', 'report_event_count']));
                         if (! array_filter(array_slice($data, 3), fn ($value) => $value !== null)) {
                             continue;
@@ -90,16 +94,23 @@ class DeviationImporter
                     }
                     $data['flight_date'] = $this->date($data['flight_date'], $book->getExcelCalendar());
                     // Counts describe the export period, not the identity of an individual event.
-                    $data['parameter_value'] = $this->decimal($data['parameter_value']);
+                    foreach (array_intersect(array_keys($data), ['parameter_value', ...$model::DECIMALS]) as $field) {
+                        $data[$field] = $this->decimal($data[$field]);
+                    }
                     $rules = [];
-                    foreach (Deviation::COLUMNS as $key => $label) {
+                    foreach ($model::COLUMNS as $key => $label) {
                         $max = in_array($key, ['event_text', 'parameter'], true) ? 1000
-                            : (in_array($key, ['event_number', 'level', 'aircraft_type', 'aircraft_registration', 'flight_number', 'captain_code', 'pilot_personnel_number'], true) ? 64 : 255);
-                        $required = in_array($key, ['event_number', 'event_text', 'level', 'flight_date', 'aircraft_type', 'aircraft_registration', 'flight_number'], true);
+                            : (in_array($key, ['event_number', 'level', 'aircraft_type', 'aircraft_registration', 'flight_number', 'captain_code', 'pilot_personnel_number', 'flight_id'], true) ? 64 : 255);
+                        $required = in_array($key, $model::REQUIRED, true);
                         $rules[$key] = [$required ? 'required' : 'nullable', 'string', "max:{$max}"];
                     }
                     $rules['flight_date'] = ['required', 'date_format:Y-m-d'];
-                    $rules['report_event_count'] = ['nullable', 'integer', 'min:0', 'max:4294967295'];
+                    if (array_key_exists('report_event_count', $data)) {
+                        $rules['report_event_count'] = ['nullable', 'integer', 'min:0', 'max:4294967295'];
+                    }
+                    foreach ($model::DECIMALS as $field) {
+                        $rules[$field] = ['nullable', 'numeric', 'between:-9999999999999,9999999999999', 'decimal:0,7'];
+                    }
                     $validator = Validator::make($data, $rules);
                     if ($validator->fails()) {
                         $this->fail("Лист {$sheet->getTitle()}, строка {$row->getRowIndex()}: ".$validator->errors()->first());
@@ -112,7 +123,7 @@ class DeviationImporter
                 }
             }
             if (! $records) {
-                $this->fail('В файле не найдены отклонения.');
+                $this->fail('В файле не найдены записи отчёта.');
             }
 
             return $records;

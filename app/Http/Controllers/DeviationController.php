@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Deviation;
+use App\Models\GreenZone;
+use App\Models\RrjExpress;
 use App\Services\DeviationImporter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -10,10 +12,38 @@ use Illuminate\Validation\Rule;
 
 class DeviationController extends Controller
 {
+    private function model(Request $request): string
+    {
+        return match ($request->route('report', 'deviations')) {
+            'green-zone' => GreenZone::class,
+            'rrj-express' => RrjExpress::class,
+            'deviations' => Deviation::class,
+            default => abort(404),
+        };
+    }
+
+    public function metadata(Request $request): JsonResponse
+    {
+        $this->permit($request, 'read');
+        $model = $this->model($request);
+        $options = [];
+        foreach ($model::OPTIONS as $field) {
+            $options[$field] = $model::query()->whereNotNull($field)->where($field, '!=', '')
+                ->distinct()->orderBy($field)->pluck($field);
+        }
+
+        return response()->json([
+            'columns' => collect($model::COLUMNS)->map(fn ($label, $field) => compact('field', 'label'))->values(),
+            'numeric_fields' => array_values(array_intersect(array_keys($model::COLUMNS), ['report_event_count', ...$model::DECIMALS])),
+            'options' => (object) $options,
+        ]);
+    }
+
     public function index(Request $request): JsonResponse
     {
-        $this->permit($request, 'deviations.read');
-        $columns = array_keys(Deviation::COLUMNS);
+        $this->permit($request, 'read');
+        $model = $this->model($request);
+        $columns = array_keys($model::COLUMNS);
         $rules = [
             'page' => ['sometimes', 'integer', 'min:1'],
             'per_page' => ['sometimes', 'integer', 'between:1,500'],
@@ -31,23 +61,24 @@ class DeviationController extends Controller
         ];
         foreach ($columns as $column) {
             $rules['filters.'.$column] = ['nullable', 'string', 'max:255'];
-            $comparable = in_array($column, ['flight_date', 'report_event_count'], true);
+            $comparable = in_array($column, ['flight_date', 'report_event_count', ...$model::DECIMALS], true);
             $rules['filter_rules.'.$column.'.constraints.*.matchMode'] = ['required', Rule::in($comparable
                 ? ['equals', 'notEquals', 'lt', 'lte', 'gt', 'gte']
                 : ['contains', 'notContains', 'startsWith', 'endsWith', 'equals', 'notEquals'])];
             $rules['filter_rules.'.$column.'.constraints.*.value'] = match ($column) {
                 'flight_date' => ['required', 'date_format:Y-m-d'],
                 'report_event_count' => ['required', 'integer', 'min:0'],
-                default => ['required', 'string', 'max:255'],
+                default => in_array($column, $model::DECIMALS, true) ? ['required', 'numeric']
+                    : ['required', 'string', in_array($column, $model::OPTIONS, true) ? 'max:1000' : 'max:255'],
             };
         }
         $rules['filters.report_event_count'] = ['nullable', 'integer', 'min:0'];
         $rules['filters.flight_date'] = ['nullable', 'date_format:Y-m-d'];
         $data = $request->validate($rules);
-        $query = Deviation::query();
+        $query = $model::query();
         foreach ($data['filters'] ?? [] as $column => $value) {
             if ($value !== null && $value !== '') {
-                if (in_array($column, ['flight_date', 'report_event_count'], true)) {
+                if (in_array($column, ['flight_date', 'report_event_count', ...$model::DECIMALS], true)) {
                     $query->where($column, $value);
                 } else {
                     // Escape LIKE wildcards with a portable, explicit escape character.
@@ -92,16 +123,17 @@ class DeviationController extends Controller
 
     public function import(Request $request, DeviationImporter $importer): JsonResponse
     {
-        $this->permit($request, 'deviations.import');
+        $this->permit($request, 'import');
         $request->validate(['file' => ['required', 'file', 'extensions:xls,xlsx', 'max:10240']]);
 
-        return response()->json($importer->import($request->file('file'), $request->user()->id));
+        return response()->json($importer->import($request->file('file'), $request->user()->id, $this->model($request)));
     }
 
     private function permit(Request $request, string $permission): void
     {
+        $report = $request->route('report', 'deviations');
         abort_unless($request->user()->status === 'active'
-            && $request->user()->hasPermission('deviations.view')
-            && $request->user()->hasPermission($permission), 403);
+            && $request->user()->hasPermission("$report.view")
+            && $request->user()->hasPermission("$report.$permission"), 403);
     }
 }

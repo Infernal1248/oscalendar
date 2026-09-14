@@ -6,6 +6,9 @@ use Illuminate\Database\Eloquent\Model;
 
 class Deviation extends Model
 {
+    public const REQUIRED = ['event_number', 'event_text', 'level', 'flight_date', 'aircraft_type', 'aircraft_registration', 'flight_number'];
+    public const DECIMALS = [];
+    public const OPTIONS = ['event_text', 'level', 'parameter'];
     public const COLUMNS = [
         'event_number' => 'Номер события',
         'event_text' => 'Текст события',

@@ -7,6 +7,20 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class RosterChangeEvent extends Model
 {
+    public static function expirePastPeriods(?int $userId = null): void
+    {
+        static::query()->when($userId !== null, fn ($query) => $query->where('user_id', $userId))
+            ->whereIn('status', ['pending', 'acknowledgement_requested'])
+            ->where('period', '<', now()->utc()->format('Y-m'))
+            ->update(['status' => 'superseded', 'superseded_at' => now()]);
+    }
+
+    public function isCurrent(): bool
+    {
+        return $this->period >= now()->utc()->format('Y-m')
+            && in_array($this->status, ['pending', 'acknowledgement_requested'], true);
+    }
+
     protected $fillable = [
         'user_id',
         'source',

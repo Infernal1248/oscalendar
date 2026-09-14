@@ -73,13 +73,39 @@ class User extends Authenticatable
             return array_keys(config('permissions.catalog'));
         }
 
-        return $this->roles->flatMap(fn (Role $role) => $role->permissions)
+        return $this->roles->reject(fn (Role $role) => $role->isPilotRole())->flatMap(fn (Role $role) => $role->permissions)
             ->push('profile.view')->unique()->values()->all();
     }
 
     public function hasPermission(string $permission): bool
     {
         return in_array($permission, $this->effectivePermissions(), true);
+    }
+
+    public function pilotRole(): ?string
+    {
+        return $this->roles->first(fn (Role $role) => $role->isPilotRole())?->key;
+    }
+
+    // Called inside the shared administration lock and target-user transaction.
+    public function assignPilotRole(?string $key, ?string $unit): void
+    {
+        \Illuminate\Support\Facades\Validator::make(['pilot_role' => $key, 'unit_number' => $unit], [
+            'pilot_role' => ['nullable', \Illuminate\Validation\Rule::in(array_keys(Role::PILOT_ROLES))],
+            'unit_number' => [$key === 'unit-head' ? 'required' : 'nullable', 'string', 'max:255',
+                function ($attribute, $value, $fail) {
+                    if (! in_array($value, \App\Services\FlightUnitDirectory::values(), true)) {
+                        $fail('Выберите лётный отряд из списка.');
+                    }
+                }],
+        ])->validate();
+        $roles = Role::whereIn('key', array_keys(Role::PILOT_ROLES))->get();
+        $this->roles()->detach($roles->modelKeys());
+        if ($key !== null) {
+            $this->roles()->attach($roles->firstWhere('key', $key)->id);
+        }
+        $this->forceFill(['unit_number' => $key === 'unit-head' ? $unit : null])->save();
+        $this->unsetRelation('roles');
     }
 
     public function telegramAccounts(): HasMany

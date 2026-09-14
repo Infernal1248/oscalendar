@@ -457,7 +457,7 @@ User flow:
 3. Bot asks portal login.
 4. Bot asks portal password and stores it encrypted in `portal_credentials.password_encrypted`.
 5. If the user was not pre-approved by admin, `users.status` remains `pending`.
-6. Admin approves with `/approve TELEGRAM_ID`.
+6. An approver confirms the request in Telegram or the cabinet without assigning a position. Positions and flight units are assigned separately in the cabinet. Legacy administrator commands `/approve TELEGRAM_ID` and `/adduser TELEGRAM_ID` also approve without classification.
 
 Admin commands:
 
@@ -476,3 +476,26 @@ Regular menu:
 Мой календарь
 Сменить пароль
 ```
+
+## September 2026: reports, acknowledgement and pilot positions
+
+Deploy **backend → migrations → frontend**. Back up the database first. The existing parser supports acknowledgement tasks from both Telegram and the personal account; no parser update is required.
+
+On REG.RU, from the Laravel project directory:
+
+```bash
+/opt/php/8.4/bin/php artisan migrate --force
+/opt/php/8.4/bin/php artisan optimize:clear
+```
+
+Upload the new frontend `dist` contents to `public`, preserving `index.php` and `.htaccess`. No new Composer or Python dependencies are required. Reload existing browser tabs after deployment.
+
+- `/green-zone` and `/rrj-express` have separate tables and opt-in reader/importer roles. Existing ordinary users are not granted these roles by the migration. Admin assigns them in user settings. XLS/XLSX imports use the common reader, validate all rows before writing and skip duplicate fingerprints, excluding export-period event totals. Files must have the matching report's headers; `.xlsx.xls` is detected by content. Without an occurrence ID, identical event rows cannot be distinguished; corrected rows are new records, not edits to previous imports.
+- `GET /api/{deviations|green-zone|rrj-express}/metadata` supplies column definitions, numeric fields and distinct dropdown options. Reading metadata requires the report's view+read permissions. All filtering, ordering, grouping and pagination (maximum 500) run on the server.
+- `POST /api/change-history/{id}/acknowledge` requires `history.view`, checks ownership/current status and queues the same operation as Telegram. `GET /api/change-history/pending-count` counts only pending current-period/future changes. Past UTC months and snapshots where the portal no longer requires acknowledgement become superseded. Web status refreshes every 15 seconds; sidebar count every 60 seconds and on tab focus.
+- The roster identity migration allows A → B → A to create a new event without re-enabling old buttons. Hashes now include addition/deletion type; existing pending snapshots may be superseded once at the first refresh after upgrade. Downgrading the identity migration is refused if repeated historical versions exist, rather than deleting history.
+- `pilot`, `unit-head`, `senior-leader` are protected informational roles with no permissions. Telegram only approves registrations; no position is assigned automatically. Managers can approve and separately set positions in the cabinet, but cannot assign access roles. Old Telegram classification buttons no longer modify users. Position and unit are not returned in the user's own `/account` response.
+- `GET /api/admin/flight-units` requires `users.view` + `users.manage` and returns unique nonempty `flight_unit` values from all three AirFASE tables using a SQL UNION. The existing Laravel cache stores this list without expiration and successful imports of new records invalidate it. Direct database changes require `php artisan cache:clear`; a shared cache lock coordinates rebuilding and invalidation. No periodic job or extra dependency is needed. Assigning a unit head requires a value from this list, checked on the backend too. The existing `users.unit_number` API/storage name is retained for compatibility, but migration `2026_09_14_000004_expand_user_flight_unit` expands it to a nullable 255-character flight unit name. Existing values are preserved; no automatic position changes occur. Deploy backend/migrations before the new frontend; this feature does not change the parser.
+
+Checks: `php artisan test --filter='AirfaseReportsTest|PilotRolesTest|RosterAcknowledgementTest|TelegramApprovalTest|ParserTaskFlowTest'`.
+To include private local sample files, set `RRJ_SAMPLE` and `GREEN_SAMPLE` to their paths. Tests use a temporary SQLite database and mock Telegram; samples are not committed or imported into the live database.

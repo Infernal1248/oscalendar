@@ -31,10 +31,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard', [AccountController::class, 'dashboard']);
     Route::get('/workplan', [AccountController::class, 'workplan']);
     Route::get('/change-history', [AccountController::class, 'changeHistory']);
-    Route::get('/deviations', [DeviationController::class, 'index']);
-    Route::post('/deviations/import', [DeviationController::class, 'import'])->middleware('throttle:10,1');
+    Route::get('/change-history/pending-count', [AccountController::class, 'pendingChanges']);
+    Route::post('/change-history/{event}/acknowledge', [AccountController::class, 'acknowledgeChange'])->whereNumber('event');
+    foreach (['deviations', 'green-zone', 'rrj-express'] as $report) {
+        Route::get('/'.$report, [DeviationController::class, 'index'])->defaults('report', $report);
+        Route::get('/'.$report.'/metadata', [DeviationController::class, 'metadata'])->defaults('report', $report);
+        Route::post('/'.$report.'/import', [DeviationController::class, 'import'])->defaults('report', $report)->middleware('throttle:10,1');
+    }
     Route::get('/workplan/flights/{flightSegment}', [AccountController::class, 'flight']);
     Route::get('/admin/users', [AdminUserController::class, 'index']);
+    Route::get('/admin/pilot-roles', [AdminUserController::class, 'pilotRoles']);
+    Route::get('/admin/flight-units', [AdminUserController::class, 'flightUnits']);
     Route::patch('/admin/users/{user}', [AdminUserController::class, 'update']);
     Route::get('/admin/permissions', [RoleController::class, 'permissions']);
     Route::get('/admin/roles', [RoleController::class, 'index']);

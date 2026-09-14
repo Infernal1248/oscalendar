@@ -63,7 +63,7 @@ class RoleAccessTest extends TestCase
         $this->actingAs($viewer)->getJson('/api/admin/users')->assertOk();
         $this->patchJson("/api/admin/users/{$user->id}", ['status' => 'active'])->assertForbidden();
         $viewer->roles()->sync([Role::where('key', 'users-manager')->sole()->id]);
-        $this->actingAs($viewer->fresh())->patchJson("/api/admin/users/{$user->id}", ['status' => 'active'])->assertOk();
+        $this->actingAs($viewer->fresh())->patchJson("/api/admin/users/{$user->id}", ['status' => 'active', 'pilot_role' => 'pilot'])->assertOk();
         $this->assertTrue($user->fresh()->hasPermission('workplan.view'));
         $this->patchJson("/api/admin/users/{$viewer->id}", ['role_ids' => [Role::where('key', 'administrator')->sole()->id]])->assertForbidden();
         $this->patchJson("/api/admin/users/{$admin->id}", ['status' => 'blocked'])->assertForbidden();

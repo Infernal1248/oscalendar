@@ -107,7 +107,7 @@ class TelegramBotService
             return;
         }
 
-        if ($this->isAdmin($account) && $this->handleAdminCommand($chatId, $text)) {
+        if ($this->isAdmin($account) && $this->handleAdminCommand($chatId, $account, $text)) {
             return;
         }
 
@@ -183,6 +183,12 @@ class TelegramBotService
             return true;
         }
 
+        if ($conversation->state === 'approval.unit') {
+            $this->closeConversation($conversation);
+            $this->client->sendMessage($chatId, 'Должность и лётный отряд теперь назначаются в личном кабинете. Откройте заявку заново для подтверждения.');
+            return true;
+        }
+
         if ($conversation->state === self::STATE_DISPLAY_NAME) {
             $account->user->forceFill(['display_name' => mb_substr($text, 0, 150)])->save();
             $this->setConversation($account, self::STATE_PORTAL_LOGIN);
@@ -225,7 +231,7 @@ class TelegramBotService
         return false;
     }
 
-    private function handleAdminCommand(int $chatId, string $text): bool
+    private function handleAdminCommand(int $chatId, TelegramAccount $actor, string $text): bool
     {
         if (preg_match('/^\/(?:approve|adduser)\s+(\d+)$/u', $text, $matches)) {
             $account = TelegramAccount::query()
@@ -234,21 +240,22 @@ class TelegramBotService
                 ->first();
 
             if (! $account) {
-                $user = User::query()->create(['status' => 'active']);
+                $user = User::query()->create(['status' => 'pending']);
                 $account = TelegramAccount::query()->create([
                     'user_id' => $user->id,
                     'telegram_id' => $matches[1],
                     'is_admin' => false,
                 ]);
                 $this->client->sendMessage($chatId, 'Пользователь добавлен. После /start бот соберёт имя и данные кабинета.');
+                $this->client->sendMessage($chatId, $this->approveUser($actor, $account->id));
                 return true;
             }
 
-            $account->user->forceFill(['status' => 'active'])->save();
-            $this->client->sendMessage($chatId, "Пользователь {$account->telegram_id} активирован.");
-            $this->client->sendMessage((int) $account->telegram_id, 'Доступ одобрен. Можно пользоваться меню.', [
-                'reply_markup' => $this->mainKeyboard($account),
-            ]);
+            if ($account->user->status === 'pending') {
+                $this->client->sendMessage($chatId, $this->approveUser($actor, $account->id));
+            } else {
+                $this->client->sendMessage($chatId, 'Заявка уже обработана. Изменить статус можно в личном кабинете.');
+            }
             return true;
         }
 
@@ -303,60 +310,37 @@ class TelegramBotService
             return;
         }
 
-        if (preg_match('/^admin\.approve:(\d+)$/', $data, $matches)) {
+        if (preg_match('/^admin\.(approve|classify):(\d+)(?::(pilot|unit-head|senior-leader))?$/', $data, $matches)) {
             if (! $this->canApproveUsers($account)) {
                 $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Недостаточно прав.');
                 return;
             }
 
             $pendingAccount = TelegramAccount::query()
-                ->whereKey((int) $matches[1])
+                ->whereKey((int) $matches[2])
                 ->with('user')
                 ->first();
-            if (! $pendingAccount || ! $pendingAccount->user) {
+            if (! $pendingAccount || ! $pendingAccount->user || $pendingAccount->user->status !== 'pending') {
                 $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Заявка уже обработана.');
                 return;
             }
 
-            $activated = DB::transaction(function () use ($account, $pendingAccount) {
-                Role::lockAdministration();
-                $actor = $account->fresh('user.roles');
-                $target = User::with('roles')->lockForUpdate()->find($pendingAccount->user_id);
-                if (! $actor || ! $this->canApproveUsers($actor)
-                    || ($target?->isAdmin() && ! $this->isAdmin($actor) && ! $actor->user->isAdmin())) {
-                    return null;
-                }
-
-                return User::query()->whereKey($pendingAccount->user_id)
-                    ->where('status', 'pending')->update(['status' => 'active']);
-            });
-            if ($activated === null) {
+            if ($pendingAccount->user->isAdmin() && ! $this->isAdmin($account) && ! $account->user->isAdmin()) {
                 $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Недостаточно прав.');
                 return;
             }
-            if ($activated === 0) {
-                $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Заявка уже обработана.');
+            if ($matches[1] === 'classify') {
+                $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Назначение должности доступно только в личном кабинете.');
                 return;
             }
-
-            $pendingAccount->user->refresh();
-            if (! empty($callback['message']['message_id'])) {
-                $this->client->removeInlineKeyboard($chatId, (int) $callback['message']['message_id']);
-            }
-            $personnelNumber = $this->portalLogin($pendingAccount->user);
-            $this->client->answerCallbackQuery(
-                (string) ($callback['id'] ?? ''),
-                'Пользователь '.($personnelNumber ?: $pendingAccount->user->display_name).' одобрен.'
-            );
-            $this->client->sendMessage(
-                (int) $pendingAccount->telegram_id,
-                'Доступ одобрен. Можно пользоваться меню.',
-                ['reply_markup' => $this->mainKeyboard($pendingAccount)]
-            );
+            $result = $this->approveUser($account, $pendingAccount->id);
+            $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), $result);
+            if (! empty($callback['message']['message_id'])) $this->client->removeInlineKeyboard($chatId, (int) $callback['message']['message_id']);
             return;
         }
 
         if (preg_match('/^roster\.ack:(\d+)$/', $data, $matches)) {
+            RosterChangeEvent::expirePastPeriods($account->user_id);
             $event = RosterChangeEvent::query()
                 ->whereKey((int) $matches[1])
                 ->where('user_id', $account->user_id)
@@ -398,6 +382,28 @@ class TelegramBotService
         if (preg_match('/^deferred\.(mel|defects):(\d+)$/', $data, $matches)) {
             $this->sendDeferredDetails($chatId, $account, (int) $matches[2], $matches[1]);
         }
+    }
+
+    private function approveUser(TelegramAccount $account, int $targetId): string
+    {
+        $targetAccount = TelegramAccount::with('user')->find($targetId);
+        if (! $targetAccount) return 'Заявка уже обработана.';
+        $result = DB::transaction(function () use ($account, $targetAccount) {
+            Role::lockAdministration();
+            $actor = $account->fresh('user.roles');
+            $target = User::with('roles')->lockForUpdate()->find($targetAccount->user_id);
+            if (! $actor || ! $this->canApproveUsers($actor)
+                || ($target?->isAdmin() && ! $this->isAdmin($actor) && ! $actor->user->isAdmin())) return 'Недостаточно прав.';
+            if (! $target || $target->status !== 'pending') return 'Заявка уже обработана.';
+            $target->forceFill(['status' => 'active'])->save();
+            return null;
+        });
+        if ($result !== null) return $result;
+        $targetAccount->load('user.roles');
+        $this->client->sendMessage((int) $targetAccount->telegram_id, 'Доступ одобрен. Можно пользоваться меню.', [
+            'reply_markup' => $this->mainKeyboard($targetAccount),
+        ]);
+        return 'Пользователь одобрен.';
     }
 
     private function sendRosterList(int $chatId, TelegramAccount $account): void

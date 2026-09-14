@@ -100,9 +100,10 @@ class ParserTaskScheduler
 
     public function scheduleRosterAcknowledgement(RosterChangeEvent $event): ?ParserTask
     {
+        RosterChangeEvent::expirePastPeriods($event->user_id);
         return DB::transaction(function () use ($event) {
             $event = RosterChangeEvent::query()->lockForUpdate()->findOrFail($event->id);
-            if ($event->status !== 'pending') {
+            if ($event->status !== 'pending' || ! $event->isCurrent()) {
                 return null;
             }
 

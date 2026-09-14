@@ -7,6 +7,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Role extends Model
 {
+    public const PILOT_ROLES = ['pilot' => 'Рядовой пилот', 'unit-head' => 'Руководитель подразделения', 'senior-leader' => 'Старший руководитель'];
+
+    public function isPilotRole(): bool
+    {
+        return array_key_exists($this->key, self::PILOT_ROLES);
+    }
     protected $fillable = ['key', 'name', 'description', 'permissions'];
 
     protected $casts = ['permissions' => 'array'];
@@ -18,7 +24,7 @@ class Role extends Model
 
     public function isProtected(): bool
     {
-        return in_array($this->key, ['administrator', 'user'], true);
+        return in_array($this->key, ['administrator', 'user'], true) || $this->isPilotRole();
     }
 
     // Serialize access changes, including concurrent attempts to remove the last admin.

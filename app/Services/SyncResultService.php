@@ -299,7 +299,7 @@ class SyncResultService
                 ->where('status', 'acknowledgement_requested')
                 ->lockForUpdate()
                 ->first();
-            if (! $acknowledgedEvent) {
+            if (! $acknowledgedEvent || ! $acknowledgedEvent->isCurrent()) {
                 throw new ConflictHttpException('The roster change event is no longer awaiting acknowledgement.');
             }
             $acknowledgedEvent->forceFill([

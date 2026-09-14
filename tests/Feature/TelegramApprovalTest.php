@@ -110,6 +110,26 @@ class TelegramApprovalTest extends TestCase
         Http::assertSent(fn ($request) => ($request['text'] ?? '') === 'Новых заявок нет.');
     }
 
+    public function test_telegram_approves_without_assigning_a_position_and_rejects_old_classification_buttons(): void
+    {
+        $manager = $this->account(101, 'users-manager');
+        $target = $this->account(200, 'user', 'pending');
+        foreach (['pilot', 'unit-head', 'senior-leader'] as $role) {
+            app(TelegramBotService::class)->handle(['callback_query' => [
+                'id' => 'old-classify', 'from' => ['id' => 101],
+                'data' => 'admin.classify:'.$target->id.':'.$role,
+            ]]);
+            $this->assertSame('pending', $target->user->fresh()->status);
+            $this->assertNull($target->user->fresh()->pilotRole());
+        }
+        $this->approve($manager, $target);
+        $this->assertSame('active', $target->user->fresh()->status);
+        $this->assertNull($target->user->fresh()->pilotRole());
+        $this->assertNull($target->user->fresh()->unit_number);
+        $this->assertNull($manager->fresh()->activeConversation());
+        Http::assertNotSent(fn ($request) => str_contains($request['text'] ?? '', 'Введите номер'));
+    }
+
     private function account(int $telegramId, string $role = 'user', string $status = 'active', bool $legacyAdmin = false): TelegramAccount
     {
         $user = User::create(['display_name' => 'Test User', 'status' => $status]);

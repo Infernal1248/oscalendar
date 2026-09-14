@@ -152,6 +152,36 @@ class PartialSyncResultTest extends TestCase
         $this->assertSame('finished', $syncRun->fresh()->status);
     }
 
+    public function test_corrected_overnight_date_replaces_old_segment_and_wrong_crew(): void
+    {
+        $user = User::create(['display_name' => 'Overnight test']);
+        $run = SyncRun::create(['user_id' => $user->id, 'source' => 'rossiya_edu', 'trigger' => 'scheduler', 'status' => 'running', 'started_at' => now()]);
+        $this->postChunk($run, $this->basePayload($run, ['roster_items' => [[
+            'source_external_id' => 'overnight-ring', 'kind' => 'flight_ring', 'starts_at' => '2026-09-16T20:30:00Z',
+        ]]]))->assertOk();
+        $payload = $this->basePayload($run, [
+            'chunk_kind' => 'flight_segments', 'roster_source_external_id' => 'overnight-ring',
+            'flight_segments' => [
+                ['source_para_id' => 'overnight-ring', 'flight_number' => 'FV6805', 'starts_at' => '2026-09-16T20:30:00Z', 'ends_at' => '2026-09-16T21:55:00Z'],
+                ['source_para_id' => 'overnight-ring', 'flight_number' => 'FV6806', 'starts_at' => '2026-09-16T04:00:00Z', 'ends_at' => '2026-09-16T05:30:00Z', 'crew' => [['full_name' => 'Wrong Day Crew']]],
+            ],
+        ]);
+        $this->postChunk($run, $payload)->assertOk();
+        $oldId = FlightSegment::where('flight_number', 'FV6806')->sole()->id;
+        $payload['flight_segments'][1]['starts_at'] = '2026-09-17T04:00:00Z';
+        $payload['flight_segments'][1]['ends_at'] = '2026-09-17T05:30:00Z';
+        $payload['flight_segments'][1]['crew'] = [['full_name' => 'Correct Day Crew']];
+        $this->postChunk($run, $payload)->assertOk();
+
+        $this->assertDatabaseCount('flight_segments', 2);
+        $this->assertDatabaseMissing('flight_segments', ['id' => $oldId]);
+        $this->assertDatabaseMissing('flight_crew_members', ['full_name' => 'Wrong Day Crew']);
+        $return = FlightSegment::where('flight_number', 'FV6806')->sole();
+        $this->assertSame('2026-09-17 04:00:00', $return->starts_at->format('Y-m-d H:i:s'));
+        $this->assertSame('Correct Day Crew', $return->crewMembers()->sole()->full_name);
+        $this->assertSame('FV6805', FlightSegment::withActualRosterItem()->orderBy('starts_at')->first()->flight_number);
+    }
+
     private function postChunk(SyncRun $syncRun, array $payload)
     {
         return $this->withToken($this->token)

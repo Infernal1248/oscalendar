@@ -11,6 +11,11 @@ use Illuminate\Validation\Rule;
 
 class AdminUserController extends Controller
 {
+    public function pilotRoles(Request $request): JsonResponse
+    {
+        abort_unless($request->user()->hasPermission('users.view') && $request->user()->hasPermission('users.manage'), 403);
+        return response()->json(collect(Role::PILOT_ROLES)->map(fn ($name, $key) => compact('key', 'name'))->values());
+    }
     public function index(Request $request): JsonResponse
     {
         abort_unless($request->user()->hasPermission('users.view'), 403);
@@ -23,6 +28,12 @@ class AdminUserController extends Controller
             ->map(fn (User $user) => $this->userData($user)));
     }
 
+    public function flightUnits(Request $request): JsonResponse
+    {
+        abort_unless($request->user()->hasPermission('users.view') && $request->user()->hasPermission('users.manage'), 403);
+        return response()->json(\App\Services\FlightUnitDirectory::values());
+    }
+
     public function update(Request $request, User $user): JsonResponse
     {
         $actor = $request->user();
@@ -32,9 +43,11 @@ class AdminUserController extends Controller
             'status' => ['sometimes', 'required', Rule::in(['active', 'pending', 'blocked', 'banned'])],
             'role_ids' => ['sometimes', 'array', 'max:100'],
             'role_ids.*' => ['required', 'integer', 'distinct', 'exists:roles,id'],
+            'pilot_role' => ['sometimes', 'nullable', Rule::in(array_keys(Role::PILOT_ROLES))],
+            'unit_number' => ['sometimes', 'nullable', 'string', 'max:255'],
             'permissions' => ['missing'], 'role' => ['missing'],
         ]);
-        abort_unless(array_key_exists('status', $data) || array_key_exists('role_ids', $data), 422, 'Не указаны изменения.');
+        abort_unless(array_intersect(array_keys($data), ['status', 'role_ids', 'pilot_role', 'unit_number']), 422, 'Не указаны изменения.');
 
         DB::transaction(function () use ($actor, $user, $data) {
             $adminRole = Role::lockAdministration();
@@ -44,6 +57,7 @@ class AdminUserController extends Controller
             $target = User::with('roles')->lockForUpdate()->findOrFail($user->id);
             abort_if($target->isAdmin() && ! $actor->isAdmin(), 403, 'Управлять администратором может только администратор.');
             $status = $data['status'] ?? $target->status;
+            $pilotRole = array_key_exists('pilot_role', $data) ? $data['pilot_role'] : $target->pilotRole();
             $roleIds = array_map('intval', $data['role_ids'] ?? $target->roles->modelKeys());
             if ($target->isAdmin() && $target->status === 'active'
                 && ($status !== 'active' || ! in_array($adminRole->id, $roleIds, true))) {
@@ -52,7 +66,12 @@ class AdminUserController extends Controller
             }
             $target->forceFill(['status' => $status])->save();
             if (array_key_exists('role_ids', $data)) {
-                $target->roles()->sync($roleIds);
+                abort_if(Role::whereIn('id', $roleIds)->whereIn('key', array_keys(Role::PILOT_ROLES))->exists(), 422, 'Укажите должность отдельным полем.');
+                $professionalIds = $target->roles->filter(fn (Role $role) => $role->isPilotRole())->modelKeys();
+                $target->roles()->sync([...$roleIds, ...$professionalIds]);
+            }
+            if (array_key_exists('pilot_role', $data) || array_key_exists('unit_number', $data)) {
+                $target->assignPilotRole($pilotRole, array_key_exists('unit_number', $data) ? $data['unit_number'] : ($pilotRole === $target->pilotRole() ? $target->unit_number : null));
             }
             if ($status !== 'active') {
                 $target->tokens()->delete();
@@ -70,6 +89,7 @@ class AdminUserController extends Controller
         return [
             'id' => $user->id, 'display_name' => $user->display_name, 'status' => $user->status,
             'is_admin' => $user->isAdmin(),
+            'pilot_role' => $user->pilotRole(), 'unit_number' => $user->unit_number,
             'roles' => $user->roles->map(fn (Role $role) => ['id' => $role->id, 'name' => $role->name])->values(),
             'permissions' => $user->effectivePermissions(),
             'portal_login' => $credential?->login, 'portal_status' => $credential?->status,

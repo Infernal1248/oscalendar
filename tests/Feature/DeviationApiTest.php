@@ -92,6 +92,8 @@ class DeviationApiTest extends TestCase
         $this->grantPermissions($reader, ['deviations.view', 'deviations.read']);
         $this->actingAs($reader)->getJson('/api/deviations')->assertOk()->assertJsonPath('total', 3)
             ->assertJsonMissingPath('data.0.fingerprint')->assertJsonMissingPath('data.0.uploaded_by');
+        $this->getJson('/api/deviations/metadata')->assertOk()->assertJsonPath('options.level', ['Medium'])
+            ->assertJsonPath('options.parameter', ['SPEED LIMIT'])->assertJsonPath('options.event_text', ['Test event 1004']);
     }
 
     public function test_invalid_import_never_partially_writes_or_evaluates_formulas(): void
@@ -167,7 +169,7 @@ class DeviationApiTest extends TestCase
             ['event_text' => $filter([$rule('invalid', 'Test')])],
             ['event_text' => $filter([$rule('contains', '')])],
             ['event_text' => $filter([$rule('contains', ['x'])])],
-            ['event_text' => $filter([$rule('contains', str_repeat('x', 256))])],
+            ['event_text' => $filter([$rule('contains', str_repeat('x', 1001))])],
             ['event_text' => $filter(array_fill(0, 6, $rule('contains', 'x')))],
             ['flight_date' => $filter([$rule('gte', '2025-02-30')])],
             ['flight_date' => $filter([$rule('contains', '2025')])],

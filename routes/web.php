@@ -22,4 +22,4 @@ Route::get('/{page?}', function () {
         'Content-Type' => 'text/html; charset=UTF-8',
         'Cache-Control' => 'no-cache',
     ]);
-})->where('page', 'login|dashboard|profile|workplan|history|deviations|admin/(users|permissions)');
+})->where('page', 'login|dashboard|profile|workplan|history|deviations|green-zone|rrj-express|admin/(users|permissions)');

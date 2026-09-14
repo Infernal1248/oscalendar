@@ -44,6 +44,7 @@ class RoleController extends Controller
     {
         $this->authorizeAdmin($request);
         abort_if($role->key === 'administrator', 422, 'Системная роль администратора неизменяема.');
+        abort_if($role->isPilotRole(), 422, 'Должностная роль не предоставляет разрешений и не изменяется.');
         $assignable = collect(config('permissions.catalog'))->where('assignable', true)->keys()->all();
         $data = $request->validate([
             'name' => ['required', 'string', 'max:150', Rule::unique('roles')->ignore($role->id)],
@@ -51,7 +52,9 @@ class RoleController extends Controller
             'permissions' => ['present', 'array', 'max:100'],
             'permissions.*' => ['required', 'string', 'distinct', Rule::in($assignable)],
         ]);
-        foreach (['deviations.read' => 'deviations.view', 'deviations.import' => 'deviations.view', 'users.manage' => 'users.view'] as $permission => $required) {
+        foreach (['deviations.read' => 'deviations.view', 'deviations.import' => 'deviations.view',
+            'green-zone.read' => 'green-zone.view', 'green-zone.import' => 'green-zone.view',
+            'rrj-express.read' => 'rrj-express.view', 'rrj-express.import' => 'rrj-express.view', 'users.manage' => 'users.view'] as $permission => $required) {
             if (in_array($permission, $data['permissions'], true)) {
                 $data['permissions'][] = $required;
             }
@@ -89,7 +92,8 @@ class RoleController extends Controller
             'id' => $role->id, 'name' => $role->name, 'description' => $role->description,
             'permissions' => $role->key === 'administrator' ? array_keys(config('permissions.catalog')) : $role->permissions,
             'users_count' => $role->users_count, 'is_system' => $role->isProtected(),
-            'editable' => $role->key !== 'administrator',
+            'editable' => $role->key !== 'administrator' && ! $role->isPilotRole(),
+            'is_pilot_role' => $role->isPilotRole(),
         ];
     }
 }

@@ -135,6 +135,7 @@ class AccountController extends Controller
     public function changeHistory(Request $request): JsonResponse
     {
         $this->permit($request, 'history.view');
+        RosterChangeEvent::expirePastPeriods($request->user()->id);
 
         return response()->json(RosterChangeEvent::query()
             ->where('user_id', $request->user()->id)
@@ -144,6 +145,23 @@ class AccountController extends Controller
             ])
             ->latest()
             ->get());
+    }
+
+    public function pendingChanges(Request $request): JsonResponse
+    {
+        $this->permit($request, 'history.view');
+        RosterChangeEvent::expirePastPeriods($request->user()->id);
+
+        return response()->json(['count' => RosterChangeEvent::where('user_id', $request->user()->id)->where('status', 'pending')->count()]);
+    }
+
+    public function acknowledgeChange(Request $request, int $event, \App\Services\ParserTaskScheduler $scheduler): JsonResponse
+    {
+        $this->permit($request, 'history.view');
+        $change = RosterChangeEvent::where('user_id', $request->user()->id)->findOrFail($event);
+        abort_unless($scheduler->scheduleRosterAcknowledgement($change), 409, 'Изменение уже подтверждается или устарело. Обновите историю.');
+
+        return response()->json(['status' => 'acknowledgement_requested'], 202);
     }
 
     public function flight(Request $request, int $flightSegment): JsonResponse
@@ -242,12 +260,18 @@ class AccountController extends Controller
                 'read' => $user->hasPermission('deviations.view') && $user->hasPermission('deviations.read'),
                 'import' => $user->hasPermission('deviations.view') && $user->hasPermission('deviations.import'),
             ],
+            'reports_access' => collect(['green-zone', 'rrj-express'])->mapWithKeys(fn ($report) => [$report => [
+                'read' => $user->hasPermission("$report.view") && $user->hasPermission("$report.read"),
+                'import' => $user->hasPermission("$report.view") && $user->hasPermission("$report.import"),
+            ]]),
             'navigation' => array_values(array_filter([
                 'profile',
                 in_array('dashboard.view', $permissions, true) ? 'dashboard' : null,
                 in_array('workplan.view', $permissions, true) ? 'workplan' : null,
                 in_array('history.view', $permissions, true) ? 'history' : null,
                 in_array('deviations.view', $permissions, true) ? 'deviations' : null,
+                in_array('green-zone.view', $permissions, true) ? 'green-zone' : null,
+                in_array('rrj-express.view', $permissions, true) ? 'rrj-express' : null,
                 in_array('users.view', $permissions, true) ? 'admin.users' : null,
                 $user->isAdmin() ? 'admin.permissions' : null,
             ])),

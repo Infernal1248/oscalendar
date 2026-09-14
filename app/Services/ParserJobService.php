@@ -249,6 +249,13 @@ class ParserJobService
         }
 
         if ($task->task_type === 'acknowledge_roster_changes') {
+            \App\Models\RosterChangeEvent::expirePastPeriods($task->user_id);
+            $event = \App\Models\RosterChangeEvent::query()->whereKey($task->payload['roster_change_event_id'] ?? 0)
+                ->where('user_id', $task->user_id)->where('source', $task->source)
+                ->where('change_hash', $task->payload['change_hash'] ?? '')->first();
+            if (! $event || ! $event->isCurrent() || $event->status !== 'acknowledgement_requested') {
+                return null;
+            }
             return $task->payload;
         }
 

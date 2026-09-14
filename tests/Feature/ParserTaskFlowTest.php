@@ -228,6 +228,11 @@ class ParserTaskFlowTest extends TestCase
         $this->assertSame('acknowledge_roster_changes', $ackJob['task_type']);
         $this->assertSame($event->id, $ackJob['task_payload']['roster_change_event_id']);
 
+        $this->sendRosterChunk($ackJob, $user, $changedItem, [
+            'requires_acknowledgement' => true, 'is_confirmed' => false,
+            'confirmation_text' => 'Последнее подтверждение было 07.08.2026 09:26',
+        ]);
+
         $this->withToken($this->token)
             ->postJson('/api/internal/sync-runs/'.$ackJob['sync_run_id'].'/partial-result', [
                 'sync_run_id' => $ackJob['sync_run_id'],
