@@ -11,8 +11,12 @@ class MonitorWebhookController extends Controller
 {
     public function __invoke(Request $request, SystemMonitor $monitor, MonitorBotClient $bot)
     {
-        $secret = config('monitor.webhook_secret');
-        abort_unless(is_string($secret) && $secret !== '' && hash_equals($secret, (string) $request->header('X-Telegram-Bot-Api-Secret-Token')), 403);
+        $secret = config('monitor.bridge_secret');
+        $name = config('monitor.bridge_name');
+        abort_unless($request->header('X-TG-Bridge') === 'vds-poller'
+            && is_string($name) && $name !== '' && $request->header('X-TG-Bot') === $name
+            && is_string($secret) && $secret !== ''
+            && hash_equals($secret, (string) $request->header('X-TG-Bridge-Secret')), 403);
         $message = $request->input('message', []);
         $from = (string) data_get($message, 'from.id', '');
         if (! in_array($from, array_map('strval', config('monitor.admin_ids')), true)
@@ -35,7 +39,7 @@ class MonitorWebhookController extends Controller
             $bot->send($from, $monitor->report($command));
         } catch (\Throwable $exception) {
             Cache::forget($key);
-            // Telegram retries non-2xx responses. Do not expose internal diagnostics.
+            // The bridge must retry non-2xx responses without advancing its offset.
             return response()->json(['ok' => false], 503);
         }
 

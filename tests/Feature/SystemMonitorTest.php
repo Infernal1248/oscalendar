@@ -22,7 +22,8 @@ class SystemMonitorTest extends TestCase
         parent::setUp();
         config([
             'database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:',
-            'monitor.token' => 'monitor-test-token', 'monitor.webhook_secret' => str_repeat('s', 32),
+            'monitor.token' => 'monitor-test-token', 'monitor.bridge_secret' => str_repeat('s', 32),
+            'monitor.bridge_name' => 'oscalendar_monitor',
             'monitor.admin_ids' => ['12345'], 'monitor.node_ids' => [],
             'services.telegram_bot.token' => 'user-bot-token',
         ]);
@@ -45,6 +46,11 @@ class SystemMonitorTest extends TestCase
             'node_id' => 'vm-1', 'source' => 'rossiya_edu', 'version' => 'abc123',
             'max_workers' => 5, 'busy_workers' => $busy,
         ])->assertOk();
+    }
+
+    private function bridgeHeaders(): array
+    {
+        return ['X-TG-Bridge' => 'vds-poller', 'X-TG-Bot' => 'oscalendar_monitor', 'X-TG-Bridge-Secret' => str_repeat('s', 32)];
     }
 
     public function test_node_auth_validation_and_idle_liveness_do_not_create_jobs(): void
@@ -73,7 +79,12 @@ class SystemMonitorTest extends TestCase
         Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
         $update = ['update_id' => 1, 'message' => ['from' => ['id' => 12345], 'chat' => ['id' => 12345, 'type' => 'private'], 'text' => '/start']];
         $this->postJson('/api/telegram/monitor/webhook', $update)->assertForbidden();
-        $headers = ['X-Telegram-Bot-Api-Secret-Token' => str_repeat('s', 32)];
+        $headers = $this->bridgeHeaders();
+        $this->postJson('/api/telegram/monitor/webhook', $update, ['X-Telegram-Bot-Api-Secret-Token' => str_repeat('s', 32)])->assertForbidden();
+        foreach (['X-TG-Bridge' => 'wrong', 'X-TG-Bot' => 'oscalendar_bot', 'X-TG-Bridge-Secret' => 'wrong'] as $header => $value) {
+            $this->postJson('/api/telegram/monitor/webhook', $update, array_replace($headers, [$header => $value]))->assertForbidden();
+            $this->postJson('/api/telegram/monitor/webhook', $update, array_diff_key($headers, [$header => true]))->assertForbidden();
+        }
         $stranger = $update;
         $stranger['message']['from']['id'] = 987;
         $this->postJson('/api/telegram/monitor/webhook', $stranger, $headers)->assertOk();
@@ -86,8 +97,8 @@ class SystemMonitorTest extends TestCase
         Http::assertSentCount(1);
         Http::assertSent(fn ($r) => $r->url() === 'https://api.telegram.org/botmonitor-test-token/sendMessage'
             && $r['chat_id'] === '12345' && isset($r['reply_markup']['keyboard']));
-        config(['monitor.webhook_secret' => '']);
-        $this->postJson('/api/telegram/monitor/webhook', $update)->assertForbidden();
+        config(['monitor.bridge_secret' => '']);
+        $this->postJson('/api/telegram/monitor/webhook', $update, $headers)->assertForbidden();
     }
 
     public function test_job_api_rate_limit_does_not_block_monitor_heartbeat(): void
@@ -103,7 +114,7 @@ class SystemMonitorTest extends TestCase
     {
         Http::fake(['api.telegram.org/*' => Http::sequence()->push(['ok' => false], 429)->push(['ok' => true])]);
         $update = ['update_id' => 9, 'message' => ['from' => ['id' => 12345], 'chat' => ['id' => 12345, 'type' => 'private'], 'text' => 'Состояние']];
-        $headers = ['X-Telegram-Bot-Api-Secret-Token' => str_repeat('s', 32)];
+        $headers = $this->bridgeHeaders();
         $this->postJson('/api/telegram/monitor/webhook', $update, $headers)->assertStatus(503);
         $this->postJson('/api/telegram/monitor/webhook', $update, $headers)->assertOk();
         Http::assertSentCount(2);
@@ -194,16 +205,36 @@ class SystemMonitorTest extends TestCase
         $this->assertFalse($monitor->snapshot()['stale_roster']);
     }
 
-    public function test_webhook_registration_validates_config_and_does_not_touch_user_bot(): void
+    public function test_bridge_setup_validates_config_and_removes_only_monitor_webhook_without_dropping_updates(): void
     {
         Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
         config(['app.url' => 'http://localhost']);
-        $this->artisan('monitor:webhook')->assertFailed();
+        $this->artisan('monitor:setup')->expectsOutputToContain('APP_URL')->assertFailed();
         Http::assertNothingSent();
         config(['app.url' => 'https://oscalendar.example']);
+        $this->artisan('monitor:setup')->expectsOutputToContain('https://oscalendar.example/api/telegram/monitor/webhook')->assertSuccessful();
+        Http::assertSentCount(2);
+        Http::assertSent(fn ($r) => $r->url() === 'https://api.telegram.org/botmonitor-test-token/deleteWebhook'
+            && $r['drop_pending_updates'] === false);
+        Http::assertSent(fn ($r) => $r->url() === 'https://api.telegram.org/botmonitor-test-token/setMyCommands');
+        Http::assertNotSent(fn ($r) => str_contains($r->url(), 'botuser-bot-token') || str_ends_with($r->url(), '/setWebhook'));
+    }
+
+    public function test_old_setup_command_is_an_alias_and_cannot_reenable_direct_webhook(): void
+    {
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        config(['app.url' => 'https://oscalendar.example']);
         $this->artisan('monitor:webhook')->assertSuccessful();
-        Http::assertSent(fn ($r) => $r->url() === 'https://api.telegram.org/botmonitor-test-token/setWebhook'
-            && $r['url'] === 'https://oscalendar.example/api/telegram/monitor/webhook'
-            && $r['secret_token'] === str_repeat('s', 32) && ! isset($r['drop_pending_updates']));
+        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/deleteWebhook'));
+        Http::assertNotSent(fn ($r) => str_ends_with($r->url(), '/setWebhook'));
+    }
+
+    public function test_invalid_bridge_config_and_reused_bot_token_fail_before_any_telegram_call(): void
+    {
+        config(['app.url' => 'https://oscalendar.example', 'monitor.bridge_secret' => '']);
+        $this->artisan('monitor:setup')->expectsOutputToContain('MONITOR_BRIDGE_SECRET')->assertFailed();
+        config(['monitor.bridge_secret' => str_repeat('s', 32), 'monitor.token' => 'user-bot-token']);
+        $this->artisan('monitor:setup')->expectsOutputToContain('MONITOR_BOT_TOKEN')->assertFailed();
+        Http::assertNothingSent();
     }
 }
