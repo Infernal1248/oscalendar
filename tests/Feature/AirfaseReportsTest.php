@@ -83,6 +83,57 @@ class AirfaseReportsTest extends TestCase
         $this->assertDatabaseCount('green_zone_flights', 2);
     }
 
+    public function test_green_zone_rounds_numbers_before_validation_and_deduplication(): void
+    {
+        $this->actingAs(User::create(['role' => 'admin', 'status' => 'active']));
+        $row = array_replace($this->row(GreenZone::class), array_fill_keys(GreenZone::DECIMALS, '1.1234567891'));
+        $row['takeoff_pitch'] = '11.1599998474121';
+        $row['max_roll'] = '-30,1234567891';
+        $row['max_load'] = '1.305';
+        $row['landing_load'] = '-1.305';
+        $row['threshold_distance'] = null;
+        $row['threshold_time'] = '1e-8';
+        $this->postJson('/api/green-zone/import', ['file' => $this->file(GreenZone::class, [$row])])
+            ->assertOk()->assertJsonPath('inserted', 1);
+        $saved = GreenZone::firstOrFail();
+        $rounded = array_replace($row, array_fill_keys(GreenZone::DECIMALS, '1.12'), [
+            'takeoff_pitch' => '11.16', 'max_roll' => '-30.12', 'max_load' => '1.31',
+            'landing_load' => '-1.31', 'threshold_distance' => null, 'threshold_time' => '0',
+        ]);
+        foreach (GreenZone::DECIMALS as $field) {
+            $this->assertSame($rounded[$field], $saved->$field === null ? null : (string) $saved->$field);
+        }
+        foreach ([$row, $rounded] as $duplicate) {
+            $this->postJson('/api/green-zone/import', ['file' => $this->file(GreenZone::class, [$duplicate])])
+                ->assertOk()->assertJsonPath('inserted', 0)->assertJsonPath('duplicates', 1);
+        }
+
+        foreach (['not a number', '1e1000', '10000000000000'] as $invalid) {
+            $row['takeoff_pitch'] = $invalid;
+            $this->postJson('/api/green-zone/import', ['file' => $this->file(GreenZone::class, [$row])])
+                ->assertUnprocessable()->assertJsonValidationErrors('file');
+        }
+        $this->assertDatabaseCount('green_zone_flights', 1);
+    }
+
+    public function test_green_zone_reimport_matches_legacy_precision_without_changing_existing_data(): void
+    {
+        $this->actingAs(User::create(['role' => 'admin', 'status' => 'active']));
+        $row = array_replace($this->row(GreenZone::class), ['max_load' => '1.305']);
+        $old = array_replace($row, ['max_pitch' => '2']);
+        $legacy = GreenZone::forceCreate($old + [
+            'fingerprint' => hash('sha256', json_encode($old, JSON_UNESCAPED_UNICODE)),
+            'source_filename' => 'previous.xlsx',
+        ]);
+        foreach (['1.305', '1.31', '1.3049999999999999'] as $value) {
+            $row['max_load'] = $value;
+            $this->postJson('/api/green-zone/import', ['file' => $this->file(GreenZone::class, [$row])])
+                ->assertOk()->assertJsonPath('inserted', 0)->assertJsonPath('duplicates', 1);
+        }
+        $this->assertSame('1.305', (string) $legacy->fresh()->max_load);
+        $this->assertDatabaseCount('green_zone_flights', 1);
+    }
+
     public function test_wrong_report_format_and_formulas_are_rejected(): void
     {
         $this->actingAs(User::create(['role' => 'admin', 'status' => 'active']));

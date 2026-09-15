@@ -22,6 +22,20 @@ class DeviationImporter
         $inserted = DB::transaction(function () use ($records, $file, $userId, $now, $model) {
             $inserted = 0;
             foreach (array_chunk($records, 100) as $chunk) {
+                // Older imports may have more decimal places and a different fingerprint.
+                $existing = [];
+                if ($model::DECIMALS !== []) {
+                    foreach ($model::query()->whereIn('flight_id', array_column($chunk, 'flight_id'))
+                        ->get(array_keys($model::COLUMNS)) as $record) {
+                        $identity = [];
+                        foreach ($model::COLUMNS as $field => $label) {
+                            $identity[$field] = in_array($field, $model::DECIMALS, true)
+                                ? $this->roundedDecimal($record->$field) : $record->$field;
+                        }
+                        $existing[$this->fingerprint($identity)] = true;
+                    }
+                    $chunk = array_filter($chunk, fn ($record) => ! isset($existing[$record['fingerprint']]));
+                }
                 $rows = array_map(fn ($record) => $record + [
                     'uploaded_by' => $userId,
                     'source_filename' => mb_substr($file->getClientOriginalName(), 0, 255),
@@ -95,7 +109,8 @@ class DeviationImporter
                     $data['flight_date'] = $this->date($data['flight_date'], $book->getExcelCalendar());
                     // Counts describe the export period, not the identity of an individual event.
                     foreach (array_intersect(array_keys($data), ['parameter_value', ...$model::DECIMALS]) as $field) {
-                        $data[$field] = $this->decimal($data[$field]);
+                        $data[$field] = in_array($field, $model::DECIMALS, true)
+                            ? $this->roundedDecimal($data[$field]) : $this->decimal($data[$field]);
                     }
                     $rules = [];
                     foreach ($model::COLUMNS as $key => $label) {
@@ -109,16 +124,13 @@ class DeviationImporter
                         $rules['report_event_count'] = ['nullable', 'integer', 'min:0', 'max:4294967295'];
                     }
                     foreach ($model::DECIMALS as $field) {
-                        $rules[$field] = ['nullable', 'numeric', 'between:-9999999999999,9999999999999', 'decimal:0,7'];
+                        $rules[$field] = ['nullable', 'numeric', 'between:-9999999999999,9999999999999', 'decimal:0,2'];
                     }
                     $validator = Validator::make($data, $rules);
                     if ($validator->fails()) {
                         $this->fail("Лист {$sheet->getTitle()}, строка {$row->getRowIndex()}: ".$validator->errors()->first());
                     }
-                    $identity = $data;
-                    unset($identity['report_event_count']);
-                    // ponytail: identical rows without an occurrence ID cannot be distinguished; use that ID if AirFASE adds it.
-                    $data['fingerprint'] = hash('sha256', json_encode($identity, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+                    $data['fingerprint'] = $this->fingerprint($data);
                     $records[] = $data;
                 }
             }
@@ -154,6 +166,23 @@ class DeviationImporter
         }
 
         return $value;
+    }
+
+    private function roundedDecimal(?string $value): ?string
+    {
+        $value = $value === null ? null : str_replace(',', '.', $value);
+        if ($value !== null && is_numeric($value) && is_finite((float) $value)) {
+            return $this->decimal(number_format(round((float) $value, 2, PHP_ROUND_HALF_UP), 2, '.', ''));
+        }
+
+        return $value;
+    }
+
+    private function fingerprint(array $data): string
+    {
+        unset($data['report_event_count']);
+
+        return hash('sha256', json_encode($data, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
     }
 
     private function date(?string $value, int $calendar): ?string
