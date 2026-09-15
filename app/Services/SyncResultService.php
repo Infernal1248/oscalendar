@@ -224,7 +224,17 @@ class SyncResultService
 
             $segment = FlightSegment::query()->firstOrNew($identity);
             $created = ! $segment->exists;
-            $segment->fill($this->segmentAttributes($userId, $source, $segmentPayload, $rosterByExternalId));
+            $preserveOps = ! $created && ($segmentPayload['source_payload']['ops_enriched'] ?? null) === false;
+            $attributes = $this->segmentAttributes($userId, $source, $segmentPayload, $rosterByExternalId);
+            if ($preserveOps) {
+                foreach (['board', 'dep_stand', 'arr_stand'] as $field) {
+                    $attributes[$field] = $segment->$field ?: $attributes[$field];
+                }
+                if (isset($segment->source_payload['ops_details'])) {
+                    $attributes['source_payload']['ops_details'] = $segment->source_payload['ops_details'];
+                }
+            }
+            $segment->fill($attributes);
             if (! empty($segmentPayload['ofp_url'])) {
                 $segment->ofp_url = $segmentPayload['ofp_url'];
             }
@@ -234,8 +244,10 @@ class SyncResultService
                 $segmentRosterItemIds[] = $segment->roster_item_id;
             }
 
-            $segment->crewMembers()->delete();
-            foreach ($segmentPayload['crew'] ?? [] as $crewPayload) {
+            if (! $preserveOps) {
+                $segment->crewMembers()->delete();
+            }
+            foreach ($preserveOps ? [] : ($segmentPayload['crew'] ?? []) as $crewPayload) {
                 $segment->crewMembers()->create([
                     'role' => $crewPayload['role'] ?? null,
                     'full_name' => $crewPayload['full_name'],
@@ -251,8 +263,10 @@ class SyncResultService
                 ]);
             }
 
-            $segment->deferredItems()->delete();
-            foreach ($segmentPayload['deferred_items'] ?? [] as $deferredPayload) {
+            if (! $preserveOps) {
+                $segment->deferredItems()->delete();
+            }
+            foreach ($preserveOps ? [] : ($segmentPayload['deferred_items'] ?? []) as $deferredPayload) {
                 $segment->deferredItems()->create([
                     'group_name' => $deferredPayload['group_name'] ?? null,
                     'title' => $deferredPayload['title'] ?? null,

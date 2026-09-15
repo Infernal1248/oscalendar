@@ -216,6 +216,10 @@ Response when a job exists:
 
 `roster_refresh` payload contains the current and next month as `months`. Its roster chunks create or refresh one `flight_details` task per eligible roster item.
 
+Long trips use the roster's actual arrival timestamp for scheduling detail refreshes. Corrected trips from the last two months with no saved segments can receive a recovery task even after their normal refresh window ends. A segment marked `source_payload.ops_enriched=false` updates its schedule but preserves any previously stored board, stands, crew, defects and OPS details. Deploy this backend support before the corresponding parser update on every VM; no migration is required. The calendar emits one event per saved segment and omits the parent trip once its segments are available.
+
+For non-flight events, the parser supplies `ends_at` from the route's `[до …]` marker. Date-only periods such as leave use `source_payload.all_day=true` and an exclusive `ends_at` at midnight after the last included day. The calendar emits `DTSTART;VALUE=DATE` and `DTEND;VALUE=DATE` for these periods, while timed events retain UTC timestamps. Existing roster IDs/calendar UIDs are preserved when end dates are populated. Deploy the backend before the parser and let roster/calendar feeds refresh; no migration is required.
+
 When a roster page contains the acknowledgement button or `warning`/`plan_new` markup, Laravel stores a versioned `roster_change_event`. A new change hash always produces a new Telegram message. The message shows the complete previous task and a `Было`/`Стало` list only for fields whose values changed. The inline acknowledgement button schedules a high-priority `acknowledge_roster_changes` task; it never calls the portal from the webhook request.
 
 The acknowledgement task is serialized only against `roster_refresh` for the same user. Flight-detail tasks remain concurrent. After the VM posts `accept=1`, it reloads the month and Laravel sends the confirmation with the current task only after the portal reports a confirmed form and removes all `warning`/`plan_new` markup.

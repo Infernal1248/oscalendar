@@ -132,4 +132,32 @@ class CalendarFeedTest extends TestCase
         $this->assertStringNotContainsString('Стоянка:', $unfolded);
         $this->assertStringNotContainsString('ФВ6209', $unfolded);
     }
+
+    public function test_non_flight_events_use_actual_end_and_leave_is_all_day(): void
+    {
+        $user = User::query()->create(['display_name' => 'Calendar durations']);
+        $feed = CalendarFeed::query()->create(['user_id' => $user->id, 'token' => 'event-duration-test']);
+        $leave = RosterItem::query()->create([
+            'user_id' => $user->id, 'kind' => 'other', 'flight_numbers_raw' => 'Плановый отпуск',
+            'starts_at' => '2026-09-24 00:00:00', 'ends_at' => '2026-10-08 00:00:00',
+            'source_payload' => ['all_day' => true],
+        ]);
+        $reserve = RosterItem::query()->create([
+            'user_id' => $user->id, 'kind' => 'other', 'flight_numbers_raw' => 'Дневной резерв',
+            'starts_at' => '2026-09-21 07:30:00', 'ends_at' => '2026-09-21 16:30:00',
+            'source_payload' => ['all_day' => false],
+        ]);
+        $night = RosterItem::query()->create([
+            'user_id' => $user->id, 'kind' => 'other', 'flight_numbers_raw' => 'Тренажёр',
+            'starts_at' => '2026-09-12 21:45:00', 'ends_at' => '2026-09-13 03:45:00',
+        ]);
+        $content = $this->get('/api/calendar/'.$feed->token.'.ics')->assertOk()->getContent();
+        $this->assertStringContainsString("DTSTART;VALUE=DATE:20260924\r\nDTEND;VALUE=DATE:20261008", $content);
+        $this->assertStringContainsString("DTSTART:20260921T073000Z\r\nDTEND:20260921T163000Z", $content);
+        $this->assertStringContainsString("DTSTART:20260912T214500Z\r\nDTEND:20260913T034500Z", $content);
+        $this->assertStringNotContainsString('DTEND:20260921T093000Z', $content);
+        foreach ([$leave, $reserve, $night] as $item) {
+            $this->assertStringContainsString('UID:roster-item-'.$item->id.'@oscalendar', $content);
+        }
+    }
 }

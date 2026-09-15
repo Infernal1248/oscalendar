@@ -153,6 +153,8 @@ class CalendarFeedController extends Controller
 
         return $this->event([
             'uid' => 'roster-item-'.$item->id.'@oscalendar',
+            'all_day' => $item->kind !== 'flight_ring' && $item->ends_at
+                && ($item->source_payload['all_day'] ?? false) === true,
             'summary' => $summary ?: ($item->title ?: $item->kind ?: 'План'),
             'description' => implode("\n", array_filter([
                 $item->route_raw ? 'Маршрут: '.$item->route_raw : null,
@@ -172,8 +174,12 @@ class CalendarFeedController extends Controller
             'BEGIN:VEVENT',
             'UID:'.$this->escape($data['uid']),
             'DTSTAMP:'.$this->icsDate(now()),
-            'DTSTART:'.$this->icsDate($data['starts_at']),
-            'DTEND:'.$this->icsDate($data['ends_at']),
+            ! empty($data['all_day'])
+                ? 'DTSTART;VALUE=DATE:'.Carbon::parse($data['starts_at'])->utc()->format('Ymd')
+                : 'DTSTART:'.$this->icsDate($data['starts_at']),
+            ! empty($data['all_day'])
+                ? 'DTEND;VALUE=DATE:'.Carbon::parse($data['ends_at'])->utc()->format('Ymd')
+                : 'DTEND:'.$this->icsDate($data['ends_at']),
             'SUMMARY:'.$this->escape($data['summary']),
         ];
 

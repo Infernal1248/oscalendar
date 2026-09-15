@@ -60,6 +60,11 @@ class ParserTaskScheduler
         }
 
         [$priority, $nextRunAt] = $this->flightSchedule($item, now());
+        // Recover missing details when a corrected roster first supplies the end of an old trip.
+        if ($nextRunAt === null && $force && $item->starts_at->gte(now()->subMonths(2))
+            && ! $item->flightSegments()->exists()) {
+            $nextRunAt = now();
+        }
         if ($nextRunAt === null) {
             if ($task && $task->status !== 'running') {
                 $task->forceFill(['status' => 'completed', 'next_run_at' => null])->save();

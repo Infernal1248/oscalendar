@@ -182,6 +182,113 @@ class PartialSyncResultTest extends TestCase
         $this->assertSame('FV6805', FlightSegment::withActualRosterItem()->orderBy('starts_at')->first()->flight_number);
     }
 
+    public function test_long_trip_exports_eight_flights_and_preserves_ops_data_during_outage(): void
+    {
+        \Illuminate\Support\Carbon::setTestNow('2026-09-12 12:00:00');
+        try {
+            $user = User::query()->create(['display_name' => 'Trip test']);
+            $run = SyncRun::query()->create([
+                'user_id' => $user->id, 'source' => 'rossiya_edu', 'trigger' => 'scheduler',
+                'status' => 'running', 'started_at' => now(),
+            ]);
+            $this->postChunk($run, $this->basePayload($run, ['roster_items' => [[
+                'source_external_id' => 'trip', 'source_request_raw' => 'trip,2026-09-09,1',
+                'kind' => 'flight_ring', 'starts_at' => '2026-09-09T00:05:00Z', 'ends_at' => '2026-09-13T04:20:00Z',
+            ]]]))->assertOk();
+            $numbers = ['SU1484п', 'ФВ6821', 'ФВ6822', 'FV6795', 'FV6796', 'ФВ6897', 'ФВ6898', 'SU1481п'];
+            $segments = [];
+            foreach ($numbers as $i => $number) {
+                $start = \Illuminate\Support\Carbon::parse('2026-09-09T00:05:00Z')->addHours(14 * $i);
+                $segments[] = [
+                    'source_para_id' => 'trip', 'flight_number' => $number,
+                    'starts_at' => $start->toIso8601String(), 'ends_at' => $start->copy()->addMinutes(135)->toIso8601String(),
+                    'board' => '89100', 'dep_stand' => '10', 'arr_stand' => '20',
+                    'source_payload' => ['ops_enriched' => true, 'ops_details' => [['kind' => 'info', 'rows' => [['known']]]]],
+                    'crew' => [['full_name' => 'Known crew']], 'deferred_items' => [['title' => 'Known defect']],
+                ];
+            }
+            $payload = $this->basePayload($run, [
+                'chunk_kind' => 'flight_segments', 'roster_source_external_id' => 'trip', 'flight_segments' => $segments,
+            ]);
+            $this->postChunk($run, $payload)->assertOk();
+            foreach ($payload['flight_segments'] as &$segment) {
+                $segment['source_payload'] = ['ops_enriched' => false];
+                $segment['board'] = '';
+                $segment['dep_stand'] = '';
+                $segment['arr_stand'] = '';
+                $segment['crew'] = [];
+                $segment['deferred_items'] = [];
+            }
+            unset($segment);
+            $this->postChunk($run, $payload)->assertOk();
+            $this->assertSame(8, FlightSegment::count());
+            foreach (FlightSegment::all() as $segment) {
+                $this->assertSame('89100', $segment->board);
+                $this->assertSame('10', $segment->dep_stand);
+                $this->assertSame('20', $segment->arr_stand);
+                $this->assertSame('Known crew', $segment->crewMembers->sole()->full_name);
+                $this->assertSame('Known defect', $segment->deferredItems->sole()->title);
+                $this->assertNotEmpty($segment->source_payload['ops_details']);
+                $this->assertFalse($segment->source_payload['ops_enriched']);
+            }
+            $feed = \App\Models\CalendarFeed::query()->create(['user_id' => $user->id, 'token' => 'long-trip-test']);
+            $ics = str_replace("\r\n ", '', $this->get('/api/calendar/'.$feed->token.'.ics')->assertOk()->getContent());
+            $this->assertSame(8, substr_count($ics, 'BEGIN:VEVENT'));
+            $this->assertStringNotContainsString('UID:roster-item-', $ics);
+            foreach ($numbers as $number) $this->assertStringContainsString('SUMMARY:'.$number, $ics);
+            $this->assertStringContainsString('DTEND:20260913T042000Z', $ics);
+        } finally {
+            \Illuminate\Support\Carbon::setTestNow();
+        }
+    }
+
+    public function test_corrected_past_trip_with_missing_segments_gets_one_recovery_task(): void
+    {
+        \Illuminate\Support\Carbon::setTestNow('2026-09-15 12:00:00');
+        try {
+            $user = User::query()->create(['display_name' => 'Recovery test']);
+            $item = RosterItem::query()->create([
+                'user_id' => $user->id, 'source' => 'rossiya_edu', 'source_external_id' => 'trip',
+                'source_request_raw' => 'trip,2026-09-09,1', 'kind' => 'flight_ring',
+                'starts_at' => '2026-09-09 00:05:00', 'ends_at' => '2026-09-13 04:20:00',
+                'is_actual' => true, 'is_removed_from_source' => false,
+            ]);
+            $task = (new \App\Services\ParserTaskScheduler())->scheduleFlightDetails($item, true);
+            $this->assertSame('scheduled', $task->status);
+            $this->assertTrue($task->next_run_at->equalTo(now()));
+            FlightSegment::query()->create([
+                'user_id' => $user->id, 'roster_item_id' => $item->id, 'source_para_id' => 'trip',
+                'flight_number' => 'FV1', 'starts_at' => $item->starts_at,
+            ]);
+            (new \App\Services\ParserTaskScheduler())->scheduleFlightDetails($item, true);
+            $this->assertSame('completed', $task->fresh()->status);
+        } finally {
+            \Illuminate\Support\Carbon::setTestNow();
+        }
+    }
+
+    public function test_non_flight_duration_update_preserves_existing_roster_identity(): void
+    {
+        $user = User::query()->create(['display_name' => 'Leave test']);
+        $run = SyncRun::query()->create([
+            'user_id' => $user->id, 'source' => 'rossiya_edu', 'trigger' => 'scheduler',
+            'status' => 'running', 'started_at' => now(),
+        ]);
+        $payload = $this->basePayload($run, ['roster_items' => [[
+            'kind' => 'other', 'title' => 'Плановый отпуск', 'flight_numbers_raw' => 'Плановый отпуск',
+            'starts_at' => '2026-09-24T00:00:00Z', 'route_raw' => '[до 07.10.2026]',
+        ]]]);
+        $this->postChunk($run, $payload)->assertOk();
+        $id = RosterItem::sole()->id;
+        $payload['roster_items'][0]['ends_at'] = '2026-10-08T00:00:00Z';
+        $payload['roster_items'][0]['source_payload'] = ['all_day' => true];
+        $this->postChunk($run, $payload)->assertOk();
+        $item = RosterItem::sole();
+        $this->assertSame($id, $item->id);
+        $this->assertTrue($item->source_payload['all_day']);
+        $this->assertSame('2026-10-08 00:00:00', $item->ends_at->format('Y-m-d H:i:s'));
+    }
+
     private function postChunk(SyncRun $syncRun, array $payload)
     {
         return $this->withToken($this->token)

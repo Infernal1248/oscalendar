@@ -62,4 +62,14 @@ class ParserTaskSchedulerTest extends TestCase
         $this->assertSame(0, $priority);
         $this->assertNull($nextRunAt);
     }
+
+    public function test_long_trip_keeps_refreshing_after_its_first_day(): void
+    {
+        $now = Carbon::parse('2026-09-12 12:00:00', 'UTC');
+        [$priority, $next] = (new ParserTaskScheduler())->flightSchedule(new RosterItem([
+            'starts_at' => '2026-09-09 00:05:00', 'ends_at' => '2026-09-13 04:20:00',
+        ]), $now);
+        $this->assertSame(100, $priority);
+        $this->assertTrue($next->equalTo($now->copy()->addMinutes(15)));
+    }
 }
