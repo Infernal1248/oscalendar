@@ -13,14 +13,12 @@ class MonitorSetup extends Command
 
     public function handle(MonitorBotClient $bot): int
     {
-        $secret = config('monitor.bridge_secret', '');
         $base = rtrim(config('app.url'), '/');
         $checks = [
             'APP_URL must be a valid HTTPS URL.' => filter_var($base, FILTER_VALIDATE_URL) && parse_url($base, PHP_URL_SCHEME) === 'https',
             'MONITOR_BOT_TOKEN must be set and differ from TELEGRAM_BOT_TOKEN.' => config('monitor.token') && config('monitor.token') !== config('services.telegram_bot.token'),
             'MONITOR_ADMIN_IDS must contain numeric Telegram user IDs.' => ! empty(config('monitor.admin_ids')),
             'MONITOR_BRIDGE_NAME must be set.' => is_string(config('monitor.bridge_name')) && trim(config('monitor.bridge_name')) !== '',
-            'MONITOR_BRIDGE_SECRET must have 32–256 characters: A-Z, a-z, 0-9, _ or -.' => preg_match('/\A[A-Za-z0-9_-]{32,256}\z/', (string) $secret),
         ];
         foreach ($checks as $message => $valid) {
             if (! $valid) {
@@ -48,7 +46,7 @@ class MonitorSetup extends Command
         $this->info('Monitor bot is ready for VDS polling; direct Telegram webhook removed.');
         $this->line('Bridge bot name: '.config('monitor.bridge_name'));
         $this->line('Bridge target: '.$base.'/api/telegram/monitor/webhook');
-        $this->line('Configure X-TG-Bridge-Secret on the bridge, then start polling and send /start to the bot.');
+        $this->line('Use the existing VDS bridge settings, then send /start to the bot. No separate monitor secret is needed.');
         return self::SUCCESS;
     }
 }

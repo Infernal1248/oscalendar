@@ -6,17 +6,25 @@ use App\Services\SystemMonitor;
 use App\Services\Telegram\MonitorBotClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class MonitorWebhookController extends Controller
 {
     public function __invoke(Request $request, SystemMonitor $monitor, MonitorBotClient $bot)
     {
-        $secret = config('monitor.bridge_secret');
+        // Same bridge and optional shared secret as the ordinary Telegram bot.
+        $secret = config('services.telegram_bridge.secret');
         $name = config('monitor.bridge_name');
-        abort_unless($request->header('X-TG-Bridge') === 'vds-poller'
-            && is_string($name) && $name !== '' && $request->header('X-TG-Bot') === $name
-            && is_string($secret) && $secret !== ''
-            && hash_equals($secret, (string) $request->header('X-TG-Bridge-Secret')), 403);
+        $reason = match (true) {
+            $request->header('X-TG-Bridge') !== 'vds-poller' => 'invalid_bridge_header',
+            $name && $request->header('X-TG-Bot') !== $name => 'invalid_bot_name',
+            $secret && ! hash_equals((string) $secret, (string) $request->header('X-TG-Bridge-Secret')) => 'invalid_bridge_secret',
+            default => null,
+        };
+        if ($reason !== null) {
+            Log::warning('Monitor bridge request rejected', ['reason' => $reason]);
+            return response()->json(['message' => 'Invalid Telegram bridge.', 'reason' => $reason], 403);
+        }
         $message = $request->input('message', []);
         $from = (string) data_get($message, 'from.id', '');
         if (! in_array($from, array_map('strval', config('monitor.admin_ids')), true)
