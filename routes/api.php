@@ -53,6 +53,8 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::prefix('internal')
     ->middleware('internal.api')
     ->group(function () {
+        Route::post('/parser-nodes/heartbeat', \App\Http\Controllers\Internal\ParserNodeController::class)
+            ->withoutMiddleware('throttle:api')->middleware('throttle:monitor');
         Route::post('/sync-runs/start', [SyncRunController::class, 'start']);
         Route::post('/sync-runs/{syncRun}/finish', [SyncRunController::class, 'finish']);
         Route::post('/sync-runs/{syncRun}/log', [SyncRunController::class, 'log']);
@@ -63,4 +65,6 @@ Route::prefix('internal')
     });
 
 Route::post('/telegram/webhook', TelegramWebhookController::class);
+Route::post('/telegram/monitor/webhook', \App\Http\Controllers\MonitorWebhookController::class)
+    ->withoutMiddleware('throttle:api')->middleware('throttle:monitor');
 Route::get('/calendar/{token}.ics', [CalendarFeedController::class, 'show']);

@@ -56,6 +56,9 @@ class RouteServiceProvider extends ServiceProvider
      */
     protected function configureRateLimiting()
     {
+        // Telemetry must not consume the job API's request budget (or vice versa).
+        RateLimiter::for('monitor', fn (Request $request) => Limit::perMinute(60)->by($request->ip()));
+
         RateLimiter::for('api', function (Request $request) {
             return Limit::perMinute(60)->by(optional($request->user())->id ?: $request->ip());
         });
