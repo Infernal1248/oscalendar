@@ -113,6 +113,11 @@ class User extends Authenticatable
         return $this->hasMany(TelegramAccount::class);
     }
 
+    public function portalProfile(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(PortalProfile::class);
+    }
+
     public function portalCredentials(): HasMany
     {
         return $this->hasMany(PortalCredential::class);

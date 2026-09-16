@@ -74,6 +74,16 @@ class AccountController extends Controller
         return response()->json($this->userData($request->user()));
     }
 
+    public function photo(Request $request): JsonResponse
+    {
+        abort_unless($request->user()->status === 'active', 403);
+        $profile = $request->user()->portalProfile;
+
+        return response()->json(['photo' => $profile?->photo_base64
+            ? 'data:'.$profile->photo_mime.';base64,'.$profile->photo_base64 : null])
+            ->header('Cache-Control', 'private, no-store');
+    }
+
     public function logout(Request $request): JsonResponse
     {
         $request->user()->currentAccessToken()?->delete();
@@ -250,6 +260,12 @@ class AccountController extends Controller
         return [
             'id' => $user->id,
             'display_name' => $user->display_name,
+            'portal_profile' => $user->portalProfile ? [
+                'full_name' => $user->portalProfile->full_name,
+                'personnel_number' => $user->portalProfile->personnel_number,
+                'has_photo' => $user->portalProfile->photo_base64 !== null,
+                'synced_at' => $user->portalProfile->synced_at,
+            ] : null,
             'timezone' => $user->timezone,
             'calendar_url' => $calendarUrl,
             'users_access' => [

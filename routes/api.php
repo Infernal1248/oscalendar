@@ -26,6 +26,7 @@ use Illuminate\Support\Facades\Route;
 Route::post('/auth/login', [AccountController::class, 'login'])->middleware('throttle:10,1');
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/account', [AccountController::class, 'me']);
+    Route::get('/account/photo', [AccountController::class, 'photo']);
     Route::patch('/account', [AccountController::class, 'updateProfile']);
     Route::post('/auth/logout', [AccountController::class, 'logout']);
     Route::get('/dashboard', [AccountController::class, 'dashboard']);

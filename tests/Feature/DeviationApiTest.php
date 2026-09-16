@@ -90,6 +90,7 @@ class DeviationApiTest extends TestCase
 
         $reader = User::create(['permissions' => ['deviations.view', 'deviations.read'], 'status' => 'active']);
         $this->grantPermissions($reader, ['deviations.view', 'deviations.read']);
+        $reader->roles()->attach(\App\Models\Role::where('key', 'senior-leader')->sole()->id);
         $this->actingAs($reader)->getJson('/api/deviations')->assertOk()->assertJsonPath('total', 3)
             ->assertJsonMissingPath('data.0.fingerprint')->assertJsonMissingPath('data.0.uploaded_by');
         $this->getJson('/api/deviations/metadata')->assertOk()->assertJsonPath('options.level', ['Medium'])
@@ -143,7 +144,9 @@ class DeviationApiTest extends TestCase
 
     public function test_column_rules_are_combined_and_validated_on_the_server(): void
     {
-        $this->actingAs($this->grantPermissions(User::create(['status' => 'active']), ['deviations.view', 'deviations.read', 'deviations.import']));
+        $reader = $this->grantPermissions(User::create(['status' => 'active']), ['deviations.view', 'deviations.read', 'deviations.import']);
+        $reader->roles()->attach(\App\Models\Role::where('key', 'senior-leader')->sole()->id);
+        $this->actingAs($reader);
         $this->postJson('/api/deviations/import', ['file' => $this->file([
             $this->group(1004, 2), $this->detail('2025-12-05'), $this->detail('2025-12-07'),
             $this->group(1023, 1), $this->detail('2025-12-06'),

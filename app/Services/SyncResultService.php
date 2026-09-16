@@ -158,6 +158,10 @@ class SyncResultService
         $rosterByExternalId = [];
         $markedItems = [];
 
+        if (! empty($payload['portal_profile'])) {
+            \App\Models\PortalProfile::storeParsed($userId, $source, $payload['portal_profile'], $payload['parsed_at'] ?? now()->toIso8601String());
+        }
+
         foreach ($payload['roster_items'] ?? [] as $itemPayload) {
             $itemPayload['source_hash'] = empty($itemPayload['source_external_id'])
                 ? $this->rosterHash($userId, $source, $itemPayload)

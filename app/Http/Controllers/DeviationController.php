@@ -26,9 +26,10 @@ class DeviationController extends Controller
     {
         $this->permit($request, 'read');
         $model = $this->model($request);
+        $query = $model::query()->visibleTo($request->user());
         $options = [];
         foreach ($model::OPTIONS as $field) {
-            $options[$field] = $model::query()->whereNotNull($field)->where($field, '!=', '')
+            $options[$field] = (clone $query)->whereNotNull($field)->where($field, '!=', '')
                 ->distinct()->orderBy($field)->pluck($field);
         }
 
@@ -36,6 +37,7 @@ class DeviationController extends Controller
             'columns' => collect($model::COLUMNS)->map(fn ($label, $field) => compact('field', 'label'))->values(),
             'numeric_fields' => array_values(array_intersect(array_keys($model::COLUMNS), ['report_event_count', ...$model::DECIMALS])),
             'options' => (object) $options,
+            'access_notice' => $this->accessNotice($request),
         ]);
     }
 
@@ -75,7 +77,7 @@ class DeviationController extends Controller
         $rules['filters.report_event_count'] = ['nullable', 'integer', 'min:0'];
         $rules['filters.flight_date'] = ['nullable', 'date_format:Y-m-d'];
         $data = $request->validate($rules);
-        $query = $model::query();
+        $query = $model::query()->visibleTo($request->user());
         foreach ($data['filters'] ?? [] as $column => $value) {
             if ($value !== null && $value !== '') {
                 if (in_array($column, ['flight_date', 'report_event_count', ...$model::DECIMALS], true)) {
@@ -135,5 +137,17 @@ class DeviationController extends Controller
         abort_unless($request->user()->status === 'active'
             && $request->user()->hasPermission("$report.view")
             && $request->user()->hasPermission("$report.$permission"), 403);
+    }
+
+    private function accessNotice(Request $request): ?string
+    {
+        $user = $request->user();
+        if ($user->isAdmin()) return null;
+        return match ($user->pilotRole()) {
+            'senior-leader' => null,
+            'unit-head' => $user->unit_number ? null : 'Лётный отряд ещё не назначен. Обратитесь к ответственному за пользователей.',
+            'pilot' => $user->portalProfile ? null : 'Профиль с портала ещё не получен. Данные появятся после синхронизации ФИО и табельного номера.',
+            default => 'Для доступа к строкам необходимо назначить должность. Обратитесь к ответственному за пользователей.',
+        };
     }
 }

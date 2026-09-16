@@ -53,6 +53,7 @@ class AirfaseReportsTest extends TestCase
             $this->postJson("/api/$report/import", ['file' => $this->file($model, [$first])])->assertOk()
                 ->assertJsonPath('inserted', 0)->assertJsonPath('duplicates', 1);
             $this->grantPermissions($user, ["$report.view", "$report.read"]);
+            $user->roles()->attach(\App\Models\Role::where('key', 'senior-leader')->sole()->id);
             $this->postJson("/api/$report/import")->assertForbidden();
             $this->getJson("/api/$report/metadata")->assertOk()->assertJsonCount(count($model::COLUMNS), 'columns');
             if ($model === RrjExpress::class) {
