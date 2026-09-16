@@ -157,7 +157,15 @@ class ParserTaskScheduler
             'last_finished_at' => $finishedAt,
         ];
 
-        if ($syncRun->status === 'finished') {
+        if ($syncRun->status === 'skipped') {
+            // A concurrent roster update may already have restored this assignment.
+            $refresh = $task->refresh_requested && $this->isFlightEligible($task->rosterItem()->first());
+            $attributes['status'] = $refresh ? 'scheduled' : 'completed';
+            $attributes['next_run_at'] = $refresh ? $finishedAt : null;
+            $attributes['refresh_requested'] = false;
+            $attributes['last_error_at'] = null;
+            $attributes['last_error_text'] = null;
+        } elseif ($syncRun->status === 'finished') {
             $attributes['last_success_at'] = $finishedAt;
             $attributes['last_error_at'] = null;
             $attributes['last_error_text'] = null;

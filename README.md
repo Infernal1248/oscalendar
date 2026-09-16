@@ -469,6 +469,8 @@ POST /api/internal/sync-runs/{sync_run_id}/finish
 }
 ```
 
+For `flight_details` only, a worker may finish with `{"status":"skipped","stats":{"skip_reason":"roster_item_removed"}}` after fetching and validating a fresh monthly workplan that confirms the assignment is absent or marked removed. Empty details alone are not proof of removal. This closes the run without a failure, without recording a successful detail refresh, and without replacing stored flight segments. The recurring task completes unless a concurrent roster update requested a refresh of a restored assignment. Deploy the backend support before updating/restarting parser supervisors; no database migration is needed. Existing historical failures are unchanged.
+
 Append parser log entry:
 
 ```http

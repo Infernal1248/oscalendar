@@ -50,9 +50,11 @@ class SyncRunController extends Controller
     public function finish(Request $request, SyncRun $syncRun, ParserTaskScheduler $taskScheduler): JsonResponse
     {
         $data = $request->validate([
-            'status' => ['required', 'string', Rule::in(['finished', 'failed'])],
+            'status' => ['required', 'string', Rule::in($syncRun->task_type === 'flight_details'
+                ? ['finished', 'failed', 'skipped'] : ['finished', 'failed'])],
             'error_text' => ['nullable', 'required_if:status,failed', 'string'],
             'stats' => ['nullable', 'array'],
+            'stats.skip_reason' => ['required_if:status,skipped', Rule::in(['roster_item_removed'])],
             'stats.items_found' => ['nullable', 'integer', 'min:0'],
             'stats.items_created' => ['nullable', 'integer', 'min:0'],
             'stats.items_updated' => ['nullable', 'integer', 'min:0'],
@@ -76,7 +78,7 @@ class SyncRunController extends Controller
         $syncRun = DB::transaction(function () use ($syncRun, $data, $stats, $taskScheduler) {
             $syncRun = SyncRun::query()->lockForUpdate()->findOrFail($syncRun->id);
 
-            if (in_array($syncRun->status, ['finished', 'failed'], true)) {
+            if (in_array($syncRun->status, ['finished', 'failed', 'skipped'], true)) {
                 if ($syncRun->status !== $data['status']) {
                     throw new ConflictHttpException('The sync run is already closed with another status.');
                 }
@@ -130,7 +132,7 @@ class SyncRunController extends Controller
 
     private function updateCredentialStatus(SyncRun $syncRun): void
     {
-        if (! $syncRun->user_id) {
+        if (! $syncRun->user_id || $syncRun->status === 'skipped') {
             return;
         }
 

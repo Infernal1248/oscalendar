@@ -151,6 +151,60 @@ class ParserTaskFlowTest extends TestCase
         $this->assertFalse($task->refresh_requested);
     }
 
+    public function test_skipped_detail_run_closes_without_recording_failure_or_success(): void
+    {
+        Carbon::setTestNow('2026-09-16 11:03:36');
+        foreach ([false, true] as $restored) {
+            $user = User::query()->create(['display_name' => 'Removed Flight User']);
+            $credential = PortalCredential::query()->create([
+                'user_id' => $user->id, 'portal' => 'rossiya_edu', 'login' => 'test',
+                'password_encrypted' => Crypt::encryptString('test'), 'status' => 'active',
+                'last_success_at' => now()->subHour(),
+            ]);
+            $item = RosterItem::query()->create([
+                'user_id' => $user->id, 'source_external_id' => '1674424',
+                'source_request_raw' => '1674424,2026-09-17 21:25:00,1',
+                'kind' => 'flight_ring', 'starts_at' => now()->addDay(),
+                'is_actual' => $restored, 'is_removed_from_source' => ! $restored,
+            ]);
+            $task = ParserTask::query()->create([
+                'task_key' => 'flight_details:rossiya_edu:roster:'.$item->id,
+                'user_id' => $user->id, 'roster_item_id' => $item->id,
+                'source' => 'rossiya_edu', 'portal' => 'rossiya_edu', 'task_type' => 'flight_details',
+                'status' => 'running', 'refresh_requested' => true,
+                'locked_by' => 'worker', 'lock_expires_at' => now()->addMinutes(15),
+            ]);
+            $run = SyncRun::query()->create([
+                'user_id' => $user->id, 'parser_task_id' => $task->id, 'roster_item_id' => $item->id,
+                'source' => 'rossiya_edu', 'task_type' => 'flight_details', 'status' => 'running',
+                'started_at' => now()->subSeconds(3), 'locked_by' => 'worker',
+                'lock_expires_at' => now()->addMinutes(15),
+            ]);
+            $url = '/api/internal/sync-runs/'.$run->id.'/finish';
+            $payload = ['status' => 'skipped', 'stats' => ['skip_reason' => 'roster_item_removed']];
+            $this->withToken($this->token)->postJson($url, ['status' => 'skipped'])
+                ->assertUnprocessable();
+            $this->withToken($this->token)->postJson($url, $payload)->assertOk()->assertJsonPath('status', 'skipped');
+            $this->withToken($this->token)->postJson($url, $payload)->assertOk();
+            $this->withToken($this->token)->postJson($url, ['status' => 'failed', 'error_text' => 'late failure'])
+                ->assertConflict();
+            $run->refresh();
+            $task->refresh();
+            $this->assertSame('roster_item_removed', $run->stats['skip_reason']);
+            $this->assertNull($run->error_text);
+            $this->assertNull($run->locked_by);
+            $this->assertNull($run->lock_expires_at);
+            $this->assertSame($restored ? 'scheduled' : 'completed', $task->status);
+            $this->assertSame($restored, $task->next_run_at !== null);
+            $this->assertNull($task->last_error_at);
+            $this->assertNull($task->last_success_at);
+            $this->assertNull($task->locked_by);
+            $this->assertFalse($task->refresh_requested);
+            $this->assertNull($credential->fresh()->last_error_at);
+            $this->assertTrue($credential->fresh()->last_success_at->equalTo(now()->subHour()));
+        }
+    }
+
     public function test_roster_change_notifies_and_acknowledgement_returns_current_task(): void
     {
         Carbon::setTestNow('2026-08-07 12:00:00');
