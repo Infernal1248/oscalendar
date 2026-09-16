@@ -8,7 +8,7 @@ class GreenZone extends Deviation
     protected $casts = [];
 
     public const REQUIRED = ['flight_date', 'flight_number', 'aircraft_registration', 'flight_id'];
-    public const OPTIONS = [];
+    public const OPTIONS = ['aircraft_type', 'pilot_position', 'flight_unit'];
     public const DECIMALS = ['takeoff_pitch', 'max_pitch', 'max_roll', 'max_load', 'landing_pitch', 'landing_load', 'threshold_distance', 'threshold_time'];
     public const COLUMNS = [
         'flight_date' => 'Дата полета',

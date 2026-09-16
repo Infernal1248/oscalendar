@@ -49,7 +49,7 @@ class DeviationImporter
         });
 
         if ($inserted > 0) {
-            FlightUnitDirectory::invalidate();
+            ReportFilterOptions::invalidate($model);
         }
         return ['processed' => count($records), 'inserted' => $inserted, 'duplicates' => count($records) - $inserted];
     }

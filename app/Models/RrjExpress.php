@@ -7,7 +7,7 @@ class RrjExpress extends Deviation
     protected $table = 'rrj_express_events';
 
     public const REQUIRED = ['event_number', 'event_text', 'flight_date', 'aircraft_registration', 'flight_number'];
-    public const OPTIONS = ['event_text'];
+    public const OPTIONS = ['event_text', 'pilot_position', 'flight_unit'];
     public const COLUMNS = [
         'event_number' => 'Номер события',
         'event_text' => 'Текст события',

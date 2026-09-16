@@ -17,7 +17,7 @@ class ReportVisibilityTest extends TestCase
         Artisan::call('migrate', ['--force' => true]);
     }
 
-    public function test_every_report_scopes_rows_totals_filters_and_metadata_by_identity_and_job_role(): void
+    public function test_every_report_scopes_rows_but_shares_filter_options_regardless_of_job_role(): void
     {
         $user = User::create(['status' => 'active']);
         $permissions = collect(['deviations', 'green-zone', 'rrj-express'])
@@ -55,11 +55,15 @@ class ReportVisibilityTest extends TestCase
                 'operator' => 'or', 'constraints' => [['matchMode' => 'equals', 'value' => 'Отряд Юг'], ['matchMode' => 'notEquals', 'value' => 'Отряд Север']],
             ]]]))->assertOk()->assertJsonPath('total', 0);
             $metadata = $this->getJson("/api/$report/metadata")->assertOk();
-            if ($model::OPTIONS) $metadata->assertJsonPath('options.event_text', ['Visible']);
-            if ($model === Deviation::class) $metadata->assertJsonPath('options.level', ['Low'])->assertJsonPath('options.parameter', ['Own parameter']);
+            $this->assertSame($model::OPTIONS, array_keys($metadata->json('options')));
+            $metadata->assertJsonPath('options.flight_unit', ['Отряд Север', 'Отряд Юг']);
+            if (in_array('event_text', $model::OPTIONS, true)) $metadata->assertJsonPath('options.event_text', ['Hidden', 'Visible']);
+            if ($model === Deviation::class) $metadata->assertJsonPath('options.level', ['High', 'Low'])
+                ->assertJsonPath('options.parameter', ['Hidden parameter', 'Own parameter']);
 
             $this->setJob($user, 'unit-head', 'Отряд Юг');
             $this->getJson("/api/$report")->assertOk()->assertJsonPath('total', 2);
+            $this->getJson("/api/$report/metadata")->assertJsonPath('options', $metadata->json('options'));
             $this->setJob($user, 'unit-head');
             $this->getJson("/api/$report")->assertOk()->assertJsonPath('total', 0);
             $this->setJob($user, 'senior-leader');
@@ -70,7 +74,7 @@ class ReportVisibilityTest extends TestCase
         $this->grantPermissions($noProfile, $permissions);
         $this->setJob($noProfile, 'pilot');
         $this->actingAs($noProfile)->getJson('/api/deviations')->assertOk()->assertJsonPath('total', 0);
-        $this->getJson('/api/deviations/metadata')->assertJsonPath('options.event_text', []);
+        $this->getJson('/api/deviations/metadata')->assertJsonPath('options.event_text', ['Hidden', 'Visible']);
         $this->grantPermissions($noProfile, []);
         $this->setJob($noProfile, 'senior-leader');
         $this->getJson('/api/deviations')->assertForbidden();

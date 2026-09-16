@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\GreenZone;
 use App\Models\RrjExpress;
 use App\Models\User;
+use App\Services\ReportFilterOptions;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -43,12 +44,13 @@ class AirfaseReportsTest extends TestCase
             $this->grantPermissions($user, ["$report.view", "$report.import"]);
             $this->getJson("/api/$report")->assertForbidden();
             $first = $this->row($model);
+            $first['flight_unit'] = 'Отряд Север';
             $second = array_replace($first, ['flight_number' => '6002', 'flight_date' => '2026-08-02']);
             if ($model === GreenZone::class) $second['max_pitch'] = '10';
-            \Illuminate\Support\Facades\Cache::put(\App\Services\FlightUnitDirectory::CACHE_KEY, ['old'], 900);
+            $this->assertSame([], ReportFilterOptions::values($model)['flight_unit']);
             $this->postJson("/api/$report/import", ['file' => $this->file($model, [$first, $second])])->assertOk()
                 ->assertExactJson(['processed' => 2, 'inserted' => 2, 'duplicates' => 0]);
-            $this->assertFalse(\Illuminate\Support\Facades\Cache::has(\App\Services\FlightUnitDirectory::CACHE_KEY));
+            $this->assertSame([trim($first['flight_unit'])], ReportFilterOptions::values($model)['flight_unit']);
             if ($model === RrjExpress::class) $first['report_event_count'] = '999';
             $this->postJson("/api/$report/import", ['file' => $this->file($model, [$first])])->assertOk()
                 ->assertJsonPath('inserted', 0)->assertJsonPath('duplicates', 1);
@@ -82,6 +84,52 @@ class AirfaseReportsTest extends TestCase
         $this->assertDatabaseCount('deviations', 0);
         $this->assertDatabaseCount('rrj_express_events', 2);
         $this->assertDatabaseCount('green_zone_flights', 2);
+    }
+
+    public function test_import_invalidates_only_its_report_options_and_union_uses_those_caches(): void
+    {
+        $this->actingAs(User::create(['role' => 'admin', 'status' => 'active']));
+        $models = [\App\Models\Deviation::class, GreenZone::class, RrjExpress::class];
+        foreach ($models as $model) {
+            $this->assertSame(array_fill_keys($model::OPTIONS, []), ReportFilterOptions::values($model));
+        }
+        $row = array_replace($this->row(GreenZone::class), [
+            'aircraft_type' => 'SU95', 'pilot_position' => 'КВС', 'flight_unit' => 'Отряд Север',
+        ]);
+        $this->postJson('/api/green-zone/import', ['file' => $this->file(GreenZone::class, [$row])])
+            ->assertOk()->assertJsonPath('inserted', 1);
+        DB::enableQueryLog();
+        foreach ($models as $model) ReportFilterOptions::values($model);
+        $this->assertCount(count(GreenZone::OPTIONS), DB::getQueryLog());
+        foreach (DB::getQueryLog() as $query) $this->assertStringContainsString('green_zone_flights', $query['query']);
+        DB::flushQueryLog();
+        $this->assertSame(['Отряд Север'], \App\Services\FlightUnitDirectory::values());
+        $this->assertSame([], DB::getQueryLog());
+        DB::disableQueryLog();
+        $this->getJson('/api/green-zone/metadata')->assertJsonPath('options', [
+            'aircraft_type' => ['SU95'], 'pilot_position' => ['КВС'], 'flight_unit' => ['Отряд Север'],
+        ]);
+
+        // Duplicate-only and rejected imports leave the warm cache alone.
+        foreach ([$row, array_replace($row, ['flight_date' => 'invalid'])] as $candidate) {
+            $response = $this->postJson('/api/green-zone/import', ['file' => $this->file(GreenZone::class, [$candidate])]);
+            if ($candidate === $row) $response->assertOk()->assertJsonPath('inserted', 0);
+            else $response->assertUnprocessable();
+            DB::enableQueryLog();
+            DB::flushQueryLog();
+            ReportFilterOptions::values(GreenZone::class);
+            $this->assertSame([], DB::getQueryLog());
+            DB::disableQueryLog();
+        }
+
+        $row = array_replace($this->row(RrjExpress::class), ['pilot_position' => 'ВП', 'flight_unit' => 'Отряд Юг']);
+        $this->postJson('/api/rrj-express/import', ['file' => $this->file(RrjExpress::class, [$row])])->assertOk();
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $this->assertSame(['Отряд Север', 'Отряд Юг'], \App\Services\FlightUnitDirectory::values());
+        $this->assertCount(count(RrjExpress::OPTIONS), DB::getQueryLog());
+        foreach (DB::getQueryLog() as $query) $this->assertStringContainsString('rrj_express_events', $query['query']);
+        DB::disableQueryLog();
     }
 
     public function test_green_zone_rounds_numbers_before_validation_and_deduplication(): void

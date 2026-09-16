@@ -78,6 +78,7 @@ class DeviationApiTest extends TestCase
     public function test_grouped_xls_imports_shared_records_and_skips_overlapping_exports(): void
     {
         $admin = User::create(['role' => 'admin', 'status' => 'active']);
+        $this->assertSame([], \App\Services\ReportFilterOptions::values(Deviation::class)['event_text']);
         $this->actingAs($admin)->postJson('/api/deviations/import', ['file' => $this->file([
             $this->group(1004, 2), $this->detail(), $this->detail('2025-12-06'),
         ])])->assertOk()->assertExactJson(['processed' => 2, 'inserted' => 2, 'duplicates' => 0]);

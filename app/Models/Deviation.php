@@ -9,7 +9,7 @@ class Deviation extends Model
 {
     public const REQUIRED = ['event_number', 'event_text', 'level', 'flight_date', 'aircraft_type', 'aircraft_registration', 'flight_number'];
     public const DECIMALS = [];
-    public const OPTIONS = ['event_text', 'level', 'parameter'];
+    public const OPTIONS = ['event_text', 'level', 'aircraft_type', 'parameter', 'pilot_position', 'flight_unit'];
     public const COLUMNS = [
         'event_number' => 'Номер события',
         'event_text' => 'Текст события',

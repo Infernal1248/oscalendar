@@ -7,7 +7,7 @@ use App\Models\Deviation;
 use App\Models\GreenZone;
 use App\Models\RrjExpress;
 use App\Services\FlightUnitDirectory;
-use Illuminate\Support\Facades\Cache;
+use App\Services\ReportFilterOptions;
 use App\Models\User;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -21,7 +21,9 @@ class PilotRolesTest extends TestCase
         config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:']);
         DB::purge('sqlite');
         Artisan::call('migrate', ['--force' => true]);
-        Cache::forget(FlightUnitDirectory::CACHE_KEY);
+        foreach ([Deviation::class, GreenZone::class, RrjExpress::class] as $model) {
+            ReportFilterOptions::invalidate($model);
+        }
     }
 
     private function reportUnit(string $model, ?string $unit): void
@@ -35,7 +37,9 @@ class PilotRolesTest extends TestCase
     {
         $manager = $this->grantPermissions(User::create(['status' => 'active']), ['users.view', 'users.manage']);
         $this->actingAs($manager)->getJson('/api/admin/flight-units')->assertOk()->assertExactJson([]);
-        Cache::forget(FlightUnitDirectory::CACHE_KEY);
+        foreach ([Deviation::class, GreenZone::class, RrjExpress::class] as $model) {
+            ReportFilterOptions::invalidate($model);
+        }
         $this->reportUnit(Deviation::class, ' Петербург ');
         $this->reportUnit(GreenZone::class, 'Петербург');
         $this->reportUnit(RrjExpress::class, 'Москва');
@@ -43,7 +47,7 @@ class PilotRolesTest extends TestCase
         $this->reportUnit(GreenZone::class, null);
         DB::enableQueryLog();
         $this->assertSame(['Москва', 'Петербург'], FlightUnitDirectory::values());
-        $this->assertCount(1, DB::getQueryLog());
+        $this->assertCount(count(Deviation::OPTIONS) + count(GreenZone::OPTIONS) + count(RrjExpress::OPTIONS), DB::getQueryLog());
         DB::flushQueryLog();
         $this->assertSame(['Москва', 'Петербург'], FlightUnitDirectory::values());
         $this->assertSame([], DB::getQueryLog());
@@ -53,7 +57,7 @@ class PilotRolesTest extends TestCase
         $this->travel(30)->days();
         try {
             $this->assertNotContains('Красноярск', FlightUnitDirectory::values());
-            FlightUnitDirectory::invalidate();
+            ReportFilterOptions::invalidate(Deviation::class);
             $this->assertContains('Красноярск', FlightUnitDirectory::values());
         } finally {
             $this->travelBack();

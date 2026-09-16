@@ -6,6 +6,7 @@ use App\Models\Deviation;
 use App\Models\GreenZone;
 use App\Models\RrjExpress;
 use App\Services\DeviationImporter;
+use App\Services\ReportFilterOptions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -26,12 +27,7 @@ class DeviationController extends Controller
     {
         $this->permit($request, 'read');
         $model = $this->model($request);
-        $query = $model::query()->visibleTo($request->user());
-        $options = [];
-        foreach ($model::OPTIONS as $field) {
-            $options[$field] = (clone $query)->whereNotNull($field)->where($field, '!=', '')
-                ->distinct()->orderBy($field)->pluck($field);
-        }
+        $options = ReportFilterOptions::values($model);
 
         return response()->json([
             'columns' => collect($model::COLUMNS)->map(fn ($label, $field) => compact('field', 'label'))->values(),
