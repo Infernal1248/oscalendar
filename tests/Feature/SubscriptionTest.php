@@ -104,7 +104,7 @@ class SubscriptionTest extends TestCase
         $this->assertDatabaseCount('subscription_payments', 1);
         $this->actingAs($user)->getJson('/api/subscription')->assertOk()
             ->assertJsonPath('subscription.full_access', true)
-            ->assertJsonPath('payments.data.0.amount_kopecks', 0);
+            ->assertJsonPath('payments.total', 0)->assertJsonPath('payments.data', []);
         $this->actingAs($admin)->postJson($url.'/'.$payment['id'].'/cancel', ['reason' => 'Ошибка'])
             ->assertOk()->assertJsonPath('subscription.full_access', false);
     }
@@ -121,7 +121,8 @@ class SubscriptionTest extends TestCase
             ->assertJsonPath('payments.data.0.ends_at', '2026-10-01');
         $this->getJson('/api/admin/users/'.$user->id.'/subscription')
             ->assertJsonPath('payments.data.0.paid_at', '2026-09-01');
-        $this->actingAs($user)->getJson('/api/subscription')->assertJsonPath('payments.data.0.paid_at', '2026-09-01');
+        $this->actingAs($user)->getJson('/api/subscription')->assertJsonPath('subscription.full_access', true)
+            ->assertJsonPath('payments.data', []);
         // The administrator's calendar date is already September 18, unlike UTC.
         $this->actingAs($admin)->postJson($url, $this->payment(['paid_at' => '2026-09-18']))
             ->assertOk()->assertJsonPath('payments.data.0.paid_at', '2026-09-18');
@@ -147,7 +148,7 @@ class SubscriptionTest extends TestCase
             $this->assertSame($expected, $user->hasFullAccess(), $time);
             $this->assertSame($expected, $user->subscriptionSummary()['full_access'], $time);
         }
-        $this->actingAs($user)->getJson('/api/subscription')->assertJsonPath('payments.data.0.starts_at', '2026-09-17')
+        $this->actingAs($admin)->getJson('/api/admin/users/'.$user->id.'/subscription')->assertJsonPath('payments.data.0.starts_at', '2026-09-17')
             ->assertJsonPath('payments.data.0.ends_at', '2027-09-17');
     }
 
@@ -162,7 +163,7 @@ class SubscriptionTest extends TestCase
         $payment = $this->actingAs($admin)->postJson($url.'/payments', $this->payment())->assertOk()->json('payments.data.0');
         $this->actingAs($other)->postJson($url.'/payments/'.$payment['id'].'/cancel', ['reason' => 'no'])->assertForbidden();
         $this->getJson('/api/subscription')->assertOk()->assertJsonPath('payments.total', 0)->assertJsonPath('subscription.full_access', false);
-        $this->actingAs($user)->getJson('/api/subscription')->assertJsonPath('payments.total', 1)
+        $this->actingAs($user)->getJson('/api/subscription')->assertJsonPath('payments.total', 0)->assertJsonPath('payments.data', [])
             ->assertJsonMissingPath('payments.data.0.comment')->assertJsonMissingPath('payments.data.0.recorded_by');
         $this->actingAs($admin)->postJson("/api/admin/users/{$other->id}/subscription/payments/{$payment['id']}/cancel", ['reason' => 'wrong user'])->assertNotFound();
         foreach ([['amount' => ''], ['amount' => null], ['amount' => '-1'], ['amount' => '1.123'], ['duration_days' => 31],
@@ -171,6 +172,34 @@ class SubscriptionTest extends TestCase
             $this->postJson($url.'/payments', $this->payment($invalid))->assertUnprocessable();
         }
         $this->postJson($url.'/payments/'.$payment['id'].'/cancel', [])->assertUnprocessable();
+    }
+
+    public function test_user_history_excludes_manual_records_before_pagination_but_admin_keeps_them(): void
+    {
+        $admin = User::create(['role' => 'admin']);
+        $user = User::create([]);
+        $other = User::create([]);
+        $attributes = ['amount_kopecks' => 100, 'duration_days' => 30, 'paid_at' => now(),
+            'starts_at' => now(), 'ends_at' => now()->addDays(30), 'recorded_by' => $admin->id];
+        // Non-manual records represent future payment-provider imports, not a live payment.
+        $online = $user->subscriptionPayments()->create($attributes + ['request_id' => (string) Str::uuid(), 'source' => 'yookassa']);
+        $other->subscriptionPayments()->create($attributes + ['request_id' => (string) Str::uuid(), 'source' => 'yookassa']);
+        for ($i = 0; $i < 21; $i++) {
+            $user->subscriptionPayments()->create(array_replace($attributes, [
+                'request_id' => (string) Str::uuid(), 'source' => 'manual', 'amount_kopecks' => $i % 2 ? 0 : 333300,
+                'canceled_at' => $i === 0 ? now() : null, 'comment' => 'ADMIN_ONLY_NOTE',
+            ]));
+        }
+        $this->actingAs($user)->getJson('/api/subscription')->assertOk()
+            ->assertJsonPath('subscription.full_access', true)->assertJsonPath('subscription.paid_until', '2026-10-17')
+            ->assertJsonPath('payments.total', 1)->assertJsonPath('payments.last_page', 1)
+            ->assertJsonCount(1, 'payments.data')->assertJsonPath('payments.data.0.id', $online->id)
+            ->assertDontSee('ADMIN_ONLY_NOTE')->assertJsonMissingPath('payments.data.0.recorded_by');
+        $this->getJson('/api/subscription?page=2')->assertOk()->assertJsonPath('payments.data', [])
+            ->assertJsonPath('payments.total', 1);
+        $this->actingAs($admin)->getJson('/api/admin/users/'.$user->id.'/subscription')->assertOk()
+            ->assertJsonPath('payments.total', 22)->assertJsonCount(20, 'payments.data')
+            ->assertJsonPath('payments.data.0.source', 'manual')->assertSee('ADMIN_ONLY_NOTE');
     }
 
     public function test_basic_access_never_returns_paid_report_data_history_details_or_calendar_tokens(): void

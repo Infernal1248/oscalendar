@@ -87,7 +87,9 @@ class SubscriptionController extends Controller
         return response()->json([
             'subscription' => $user->subscriptionSummary(),
             'plans' => collect(SubscriptionPayment::PLANS)->map(fn ($label, $days) => ['days' => $days, 'label' => $label, 'price' => null])->values(),
-            'payments' => $user->subscriptionPayments()->select($fields)->orderByDesc('id')->paginate(20),
+            'payments' => $user->subscriptionPayments()->select($fields)
+                ->when(! $admin, fn ($query) => $query->where('source', '!=', 'manual'))
+                ->orderByDesc('id')->paginate(20),
         ])->header('Cache-Control', 'private, no-store');
     }
 }
