@@ -35,6 +35,7 @@ class AirfaseReportsTest extends TestCase
     public function test_separate_reports_have_opt_in_access_deduplication_metadata_and_server_queries(): void
     {
         $user = User::create(['status' => 'active']);
+        $this->grantSubscription($user);
         $this->actingAs($user);
         foreach (['green-zone' => GreenZone::class, 'rrj-express' => RrjExpress::class] as $report => $model) {
             $this->grantPermissions($user, ['deviations.view', 'deviations.read', 'deviations.import']);

@@ -20,6 +20,7 @@ class ReportVisibilityTest extends TestCase
     public function test_every_report_scopes_rows_but_shares_filter_options_regardless_of_job_role(): void
     {
         $user = User::create(['status' => 'active']);
+        $this->grantSubscription($user);
         $permissions = collect(['deviations', 'green-zone', 'rrj-express'])
             ->flatMap(fn ($report) => ["$report.view", "$report.read", "$report.import"])->all();
         $this->grantPermissions($user, $permissions);
@@ -71,6 +72,7 @@ class ReportVisibilityTest extends TestCase
             $this->actingAs(User::create(['status' => 'active', 'role' => 'admin']))->getJson("/api/$report")->assertOk()->assertJsonPath('total', 5);
         }
         $noProfile = User::create(['status' => 'active']);
+        $this->grantSubscription($noProfile);
         $this->grantPermissions($noProfile, $permissions);
         $this->setJob($noProfile, 'pilot');
         $this->actingAs($noProfile)->getJson('/api/deviations')->assertOk()->assertJsonPath('total', 0);

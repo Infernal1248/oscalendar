@@ -41,6 +41,7 @@ class DeviationApiTest extends TestCase
     {
         $this->getJson('/api/deviations')->assertUnauthorized();
         $user = User::create(['display_name' => 'Reader', 'status' => 'active']);
+        $this->grantSubscription($user);
         $this->actingAs($user)->getJson('/api/account')
             ->assertJsonMissingPath('permissions')->assertJsonMissingPath('role')
             ->assertJsonPath('deviations_access.read', false)->assertJsonPath('deviations_access.import', false);
@@ -90,6 +91,7 @@ class DeviationApiTest extends TestCase
         $this->assertDatabaseCount('deviations', 3);
 
         $reader = User::create(['permissions' => ['deviations.view', 'deviations.read'], 'status' => 'active']);
+        $this->grantSubscription($reader);
         $this->grantPermissions($reader, ['deviations.view', 'deviations.read']);
         $reader->roles()->attach(\App\Models\Role::where('key', 'senior-leader')->sole()->id);
         $this->actingAs($reader)->getJson('/api/deviations')->assertOk()->assertJsonPath('total', 3)
@@ -146,6 +148,7 @@ class DeviationApiTest extends TestCase
     public function test_column_rules_are_combined_and_validated_on_the_server(): void
     {
         $reader = $this->grantPermissions(User::create(['status' => 'active']), ['deviations.view', 'deviations.read', 'deviations.import']);
+        $this->grantSubscription($reader);
         $reader->roles()->attach(\App\Models\Role::where('key', 'senior-leader')->sole()->id);
         $this->actingAs($reader);
         $this->postJson('/api/deviations/import', ['file' => $this->file([

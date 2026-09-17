@@ -133,6 +133,9 @@ class DeviationController extends Controller
         abort_unless($request->user()->status === 'active'
             && $request->user()->hasPermission("$report.view")
             && $request->user()->hasPermission("$report.$permission"), 403);
+        if ($permission === 'read') {
+            abort_unless($request->user()->hasFullAccess(), 402, 'Просмотр записей доступен в полной версии.');
+        }
     }
 
     private function accessNotice(Request $request): ?string

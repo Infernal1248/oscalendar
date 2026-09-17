@@ -1,0 +1,147 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\{CalendarFeed, RosterChangeEvent, Role, SubscriptionPayment, User};
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\{Artisan, DB};
+use Illuminate\Support\Str;
+use Tests\TestCase;
+
+class SubscriptionTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:']);
+        DB::purge('sqlite');
+        Artisan::call('migrate', ['--force' => true]);
+        Carbon::setTestNow('2026-09-17 12:00:00');
+    }
+
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+        parent::tearDown();
+    }
+
+    private function payment(array $replace = []): array
+    {
+        return array_replace(['request_id' => (string) Str::uuid(), 'amount' => '199,90',
+            'duration_days' => 30, 'paid_at' => now()->subHour()->toIso8601String(), 'comment' => 'Private admin note'], $replace);
+    }
+
+    public function test_manual_payments_extend_once_and_cancellation_preserves_audit_and_other_periods(): void
+    {
+        $admin = User::create(['role' => 'admin']);
+        $user = User::create([]);
+        $url = "/api/admin/users/{$user->id}/subscription/payments";
+        $this->actingAs($admin);
+        $payload = $this->payment();
+        $first = $this->postJson($url, $payload)->assertOk()->assertJsonPath('subscription.full_access', true)
+            ->assertJsonPath('payments.data.0.amount_kopecks', 19990)->json('payments.data.0');
+        $this->postJson($url, $payload)->assertOk();
+        $this->assertDatabaseCount('subscription_payments', 1);
+        $this->postJson($url, array_replace($payload, ['amount' => '200']))->assertConflict();
+        $second = $this->postJson($url, $this->payment(['duration_days' => 90]))->assertOk()->json('payments.data.0');
+        $this->assertSame($first['ends_at'], $second['starts_at']);
+        $this->assertTrue(Carbon::parse($second['ends_at'])->equalTo(now()->addDays(120)));
+        $this->assertTrue($user->hasFullAccess());
+        $this->postJson($url.'/'.$first['id'].'/cancel', ['reason' => 'Ошибочная запись'])->assertOk();
+        $this->postJson($url.'/'.$first['id'].'/cancel', ['reason' => 'Повтор'])->assertOk();
+        $this->assertFalse($user->hasFullAccess());
+        $this->assertSame('Ошибочная запись', SubscriptionPayment::find($first['id'])->cancel_reason);
+        $this->assertSame($admin->id, SubscriptionPayment::find($first['id'])->canceled_by);
+        $this->assertSame($second['starts_at'], SubscriptionPayment::find($second['id'])->starts_at->toJSON());
+        $this->assertDatabaseCount('subscription_payments', 2);
+        Carbon::setTestNow(Carbon::parse($second['starts_at']));
+        $this->assertTrue($user->hasFullAccess());
+        Carbon::setTestNow(Carbon::parse($second['ends_at']));
+        $this->assertFalse($user->hasFullAccess());
+    }
+
+    public function test_only_admin_can_record_or_cancel_payments_and_users_only_see_their_history(): void
+    {
+        $admin = User::create(['role' => 'admin']);
+        $user = User::create([]);
+        $other = $this->grantPermissions(User::create([]), ['users.view', 'users.manage']);
+        $url = "/api/admin/users/{$user->id}/subscription";
+        $this->actingAs($other)->getJson($url)->assertForbidden();
+        $this->postJson($url.'/payments', $this->payment())->assertForbidden();
+        $payment = $this->actingAs($admin)->postJson($url.'/payments', $this->payment())->assertOk()->json('payments.data.0');
+        $this->actingAs($other)->postJson($url.'/payments/'.$payment['id'].'/cancel', ['reason' => 'no'])->assertForbidden();
+        $this->getJson('/api/subscription')->assertOk()->assertJsonPath('payments.total', 0)->assertJsonPath('subscription.full_access', false);
+        $this->actingAs($user)->getJson('/api/subscription')->assertJsonPath('payments.total', 1)
+            ->assertJsonMissingPath('payments.data.0.comment')->assertJsonMissingPath('payments.data.0.recorded_by');
+        $this->actingAs($admin)->postJson("/api/admin/users/{$other->id}/subscription/payments/{$payment['id']}/cancel", ['reason' => 'wrong user'])->assertNotFound();
+        foreach ([['amount' => '0'], ['amount' => '-1'], ['amount' => '1.123'], ['duration_days' => 31],
+            ['paid_at' => now()->addDay()->toIso8601String()], ['starts_at' => now()->addDay()->toIso8601String()]] as $invalid) {
+            $this->postJson($url.'/payments', $this->payment($invalid))->assertUnprocessable();
+        }
+        $this->postJson($url.'/payments/'.$payment['id'].'/cancel', [])->assertUnprocessable();
+    }
+
+    public function test_basic_access_never_returns_paid_report_data_history_details_or_calendar_tokens(): void
+    {
+        $user = $this->grantPermissions(User::create([]), [
+            'profile.view', 'workplan.view', 'history.view',
+            'deviations.view', 'deviations.read', 'deviations.import',
+            'green-zone.view', 'green-zone.read', 'rrj-express.view', 'rrj-express.read',
+        ]);
+        $feed = CalendarFeed::create(['user_id' => $user->id, 'token' => 'PRIVATE_CALENDAR_TOKEN', 'is_active' => true]);
+        $event = RosterChangeEvent::create([
+            'user_id' => $user->id, 'source' => 'rossiya_edu', 'period' => '2026-09', 'status' => 'pending',
+            'change_hash' => str_repeat('a', 64), 'changes' => [['secret' => 'PRIVATE_CHANGE_DETAILS']],
+        ]);
+        $this->actingAs($user)->getJson('/api/account')->assertOk()->assertJsonPath('calendar_url', null)
+            ->assertJsonPath('subscription.full_access', false)->assertDontSee($feed->token);
+        $this->getJson('/api/change-history')->assertOk()->assertJsonPath('0.changes', [])
+            ->assertJsonPath('0.details_locked', true)->assertDontSee('PRIVATE_CHANGE_DETAILS');
+        $this->getJson('/api/workplan')->assertOk();
+        $this->postJson('/api/change-history/'.$event->id.'/acknowledge')->assertStatus(202);
+        foreach (['deviations', 'green-zone', 'rrj-express'] as $report) {
+            $this->getJson('/api/'.$report)->assertStatus(402);
+            $this->getJson('/api/'.$report.'/metadata')->assertStatus(402);
+        }
+        $this->postJson('/api/deviations/import', [])->assertUnprocessable(); // Import permission stays independent.
+        $this->get('/api/calendar/'.$feed->token.'.ics')->assertForbidden();
+        $admin = User::create(['role' => 'admin']);
+        $this->actingAs($admin)->postJson("/api/admin/users/{$user->id}/subscription/payments", $this->payment())->assertOk();
+        $this->actingAs($user)->getJson('/api/account')->assertJsonPath('subscription.full_access', true)->assertSee($feed->token);
+        $this->getJson('/api/change-history')->assertJsonPath('0.details_locked', false)->assertSee('PRIVATE_CHANGE_DETAILS');
+        $this->get('/api/calendar/'.$feed->token.'.ics')->assertOk();
+        foreach (['deviations', 'green-zone', 'rrj-express'] as $report) $this->getJson('/api/'.$report)->assertOk()->assertJsonPath('total', 0);
+        $this->grantPermissions($user, ['profile.view']);
+        $this->getJson('/api/deviations')->assertForbidden(); // Payment does not grant permissions.
+        $user->update(['status' => 'blocked']);
+        $this->assertFalse($user->fresh()->hasFullAccess());
+        $this->get('/api/calendar/'.$feed->token.'.ics')->assertForbidden();
+    }
+
+    public function test_preview_copy_follows_job_role_without_exposing_the_role_key(): void
+    {
+        $user = User::create([]);
+        foreach (['pilot' => 'ваши записи', 'unit-head' => 'вашему лётному отряду', 'senior-leader' => 'все записи'] as $key => $copy) {
+            $user->roles()->sync([Role::where('key', $key)->sole()->id]);
+            $user->unsetRelation('roles');
+            $response = $this->actingAs($user)->getJson('/api/account')->assertOk()->assertJsonMissingPath('pilot_role');
+            $this->assertStringContainsString($copy, $response->json('report_preview'));
+        }
+    }
+
+    public function test_telegram_calendar_command_obeys_the_same_subscription(): void
+    {
+        config(['services.telegram_bot.token' => 'test-bot-token']);
+        \Illuminate\Support\Facades\Http::fake(fn () => \Illuminate\Support\Facades\Http::response(['ok' => true, 'result' => ['message_id' => 1]]));
+        $user = User::create(['display_name' => 'Test']);
+        \App\Models\TelegramAccount::create(['user_id' => $user->id, 'telegram_id' => 123456]);
+        $message = ['message' => ['chat' => ['id' => 123456], 'from' => ['id' => 123456], 'text' => 'Мой календарь']];
+        app(\App\Services\Telegram\TelegramBotService::class)->handle($message);
+        $this->assertDatabaseCount('calendar_feeds', 0);
+        \Illuminate\Support\Facades\Http::assertSent(fn ($request) => str_contains($request['text'] ?? '', 'Календарь доступен в полной версии'));
+        $this->grantSubscription($user);
+        app(\App\Services\Telegram\TelegramBotService::class)->handle($message);
+        $this->assertDatabaseCount('calendar_feeds', 1);
+        \Illuminate\Support\Facades\Http::assertSent(fn ($request) => str_contains($request['text'] ?? '', '/api/calendar/'));
+    }
+}

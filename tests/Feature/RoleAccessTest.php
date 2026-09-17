@@ -37,6 +37,7 @@ class RoleAccessTest extends TestCase
         $this->patchJson("/api/admin/users/{$user->id}", ['role_ids' => [$basic->id, $role['id']]])->assertOk();
         $this->assertTrue($user->fresh()->hasPermission('workplan.view'));
         $this->assertTrue($user->fresh()->hasPermission('deviations.read'));
+        $this->grantSubscription($user);
         $this->actingAs($user->fresh())->getJson('/api/deviations')->assertOk();
 
         $this->actingAs($admin)->deleteJson('/api/admin/roles/'.$role['id'])->assertUnprocessable();

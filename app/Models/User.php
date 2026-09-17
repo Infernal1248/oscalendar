@@ -64,6 +64,38 @@ class User extends Authenticatable
         return $this->roles->contains('key', 'administrator');
     }
 
+    public function subscriptionPayments(): HasMany
+    {
+        return $this->hasMany(SubscriptionPayment::class);
+    }
+
+    public function hasFullAccess(): bool
+    {
+        return $this->status === 'active' && ($this->isAdmin() || $this->subscriptionPayments()
+            ->whereNull('canceled_at')->where('starts_at', '<=', now())->where('ends_at', '>', now())->exists());
+    }
+
+    public function subscriptionSummary(): array
+    {
+        $active = $this->subscriptionPayments()->whereNull('canceled_at')
+            ->where('starts_at', '<=', now())->where('ends_at', '>', now())->orderByDesc('ends_at')->first();
+        $until = $active?->ends_at?->copy();
+        if ($until) {
+            // Extend the displayed end only through contiguous, non-canceled paid periods.
+            foreach ($this->subscriptionPayments()->whereNull('canceled_at')->where('starts_at', '>', now())->orderBy('starts_at')->get() as $payment) {
+                if ($payment->starts_at->greaterThan($until)) break;
+                if ($payment->ends_at->greaterThan($until)) $until = $payment->ends_at->copy();
+            }
+        }
+        return [
+            'full_access' => $this->status === 'active' && ($this->isAdmin() || $active !== null),
+            'status' => $this->isAdmin() ? 'included' : ($active ? 'active' : 'basic'),
+            'paid_until' => $until?->toIso8601String(),
+            'extension_from' => ($lastEnd = $this->subscriptionPayments()->whereNull('canceled_at')->max('ends_at'))
+                ? \Illuminate\Support\Carbon::parse($lastEnd, 'UTC')->toIso8601String() : null,
+        ];
+    }
+
     public function effectivePermissions(): array
     {
         if ($this->status !== 'active') {

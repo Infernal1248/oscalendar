@@ -40,6 +40,7 @@ class CalendarFeedTest extends TestCase
     public function test_calendar_uses_direct_titles_and_replaces_flight_details_with_crew(): void
     {
         $user = User::query()->create(['display_name' => 'Calendar Test']);
+        $this->grantSubscription($user);
         $feed = CalendarFeed::query()->create([
             'user_id' => $user->id,
             'token' => 'calendar-test-token',
@@ -136,6 +137,7 @@ class CalendarFeedTest extends TestCase
     public function test_non_flight_events_use_actual_end_and_leave_is_all_day(): void
     {
         $user = User::query()->create(['display_name' => 'Calendar durations']);
+        $this->grantSubscription($user);
         $feed = CalendarFeed::query()->create(['user_id' => $user->id, 'token' => 'event-duration-test']);
         $leave = RosterItem::query()->create([
             'user_id' => $user->id, 'kind' => 'other', 'flight_numbers_raw' => 'Плановый отпуск',

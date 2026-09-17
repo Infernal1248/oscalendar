@@ -18,6 +18,8 @@ class CalendarFeedController extends Controller
             ->where('is_active', true)
             ->firstOrFail();
 
+        abort_unless($feed->user?->hasFullAccess(), 403, 'Календарь доступен в полной версии. Проверьте подписку в личном кабинете.');
+
         $calendar = $this->calendar($feed);
 
         $feed->forceFill([

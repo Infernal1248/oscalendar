@@ -26,6 +26,10 @@ use Illuminate\Support\Facades\Route;
 Route::post('/auth/login', [AccountController::class, 'login'])->middleware('throttle:10,1');
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/account', [AccountController::class, 'me']);
+    Route::get('/subscription', [\App\Http\Controllers\SubscriptionController::class, 'show']);
+    Route::get('/admin/users/{user}/subscription', [\App\Http\Controllers\SubscriptionController::class, 'adminShow']);
+    Route::post('/admin/users/{user}/subscription/payments', [\App\Http\Controllers\SubscriptionController::class, 'store']);
+    Route::post('/admin/users/{user}/subscription/payments/{payment}/cancel', [\App\Http\Controllers\SubscriptionController::class, 'cancel'])->whereNumber('payment');
     Route::get('/account/photo', [AccountController::class, 'photo']);
     Route::patch('/account', [AccountController::class, 'updateProfile']);
     Route::post('/auth/logout', [AccountController::class, 'logout']);

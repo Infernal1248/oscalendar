@@ -146,15 +146,21 @@ class AccountController extends Controller
     {
         $this->permit($request, 'history.view');
         RosterChangeEvent::expirePastPeriods($request->user()->id);
+        $fullAccess = $request->user()->hasFullAccess();
 
         return response()->json(RosterChangeEvent::query()
             ->where('user_id', $request->user()->id)
             ->select([
-                'id', 'period', 'status', 'changes', 'created_at',
+                'id', 'period', 'status', 'created_at', ...($fullAccess ? ['changes'] : []),
                 'acknowledgement_requested_at', 'acknowledged_at', 'superseded_at',
             ])
             ->latest()
-            ->get());
+            ->get()->map(function ($event) use ($fullAccess) {
+                $data = $event->toArray();
+                $data['details_locked'] = ! $fullAccess;
+                if (! $fullAccess) $data['changes'] = [];
+                return $data;
+            }))->header('Cache-Control', 'private, no-store');
     }
 
     public function pendingChanges(Request $request): JsonResponse
@@ -243,7 +249,8 @@ class AccountController extends Controller
         abort_unless($user->status === 'active', 403);
         $permissions = $user->effectivePermissions();
         $calendarUrl = null;
-        if ($user->role !== 'admin') {
+        $subscription = $user->subscriptionSummary();
+        if ($user->role !== 'admin' && $subscription['full_access']) {
             $feed = CalendarFeed::query()->firstOrCreate(
                 ['user_id' => $user->id, 'is_active' => true],
                 [
@@ -268,6 +275,13 @@ class AccountController extends Controller
             ] : null,
             'timezone' => $user->timezone,
             'calendar_url' => $calendarUrl,
+            'subscription' => $subscription,
+            'report_preview' => match ($user->pilotRole()) {
+                'pilot' => 'В полной версии вы сможете увидеть ваши записи.',
+                'unit-head' => 'В полной версии вы сможете увидеть записи по вашему лётному отряду.',
+                'senior-leader' => 'В полной версии вы сможете увидеть все записи.',
+                default => 'В полной версии вы сможете увидеть записи, доступные вам после назначения должности администратором.',
+            },
             'users_access' => [
                 'manage' => $user->hasPermission('users.view') && $user->hasPermission('users.manage'),
                 'assign_roles' => $user->isAdmin(),

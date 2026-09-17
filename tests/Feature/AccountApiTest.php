@@ -223,6 +223,7 @@ class AccountApiTest extends TestCase
             ->assertJsonPath('crew.0.phones.0', '+79990000000')
             ->assertJsonPath('ofp_url', 'https://edu.rossiya-airlines.com/ops/detail/ofp-1/');
 
+        $this->grantSubscription($user);
         $this->actingAs($user)->patchJson('/api/account', ['timezone' => 'Asia/Krasnoyarsk'])
             ->assertOk()
             ->assertJsonPath('timezone', 'Asia/Krasnoyarsk')
@@ -232,6 +233,7 @@ class AccountApiTest extends TestCase
     public function test_user_can_view_roster_change_history(): void
     {
         $user = User::query()->create(['display_name' => 'Crew Member']);
+        $this->grantSubscription($user);
         RosterChangeEvent::query()->create([
             'user_id' => $user->id,
             'source' => 'rossiya_edu',

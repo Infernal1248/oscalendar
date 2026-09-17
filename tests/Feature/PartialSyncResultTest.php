@@ -232,6 +232,7 @@ class PartialSyncResultTest extends TestCase
                 $this->assertFalse($segment->source_payload['ops_enriched']);
             }
             $feed = \App\Models\CalendarFeed::query()->create(['user_id' => $user->id, 'token' => 'long-trip-test']);
+            $this->grantSubscription($user);
             $ics = str_replace("\r\n ", '', $this->get('/api/calendar/'.$feed->token.'.ics')->assertOk()->getContent());
             $this->assertSame(8, substr_count($ics, 'BEGIN:VEVENT'));
             $this->assertStringNotContainsString('UID:roster-item-', $ics);

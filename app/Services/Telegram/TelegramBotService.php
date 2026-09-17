@@ -540,6 +540,10 @@ class TelegramBotService
 
     private function sendCalendarLink(int $chatId, TelegramAccount $account): void
     {
+        if (! $account->user->hasFullAccess()) {
+            $this->client->sendMessage($chatId, 'Календарь доступен в полной версии. Информация о подписке — в личном кабинете.');
+            return;
+        }
         $feed = CalendarFeed::query()->firstOrCreate(
             ['user_id' => $account->user_id, 'is_active' => true],
             [
