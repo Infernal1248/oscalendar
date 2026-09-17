@@ -109,6 +109,27 @@ class RoleAccessTest extends TestCase
         $this->assertNull(collect($rows)->firstWhere('id', $viewer->id)['pilot_role_name']);
     }
 
+    public function test_user_list_and_update_return_personnel_number_from_profile(): void
+    {
+        $manager = $this->grantPermissions(User::create([]), ['users.view', 'users.manage']);
+        $user = User::create([]);
+        $user->portalProfile()->create(['source' => 'rossiya_edu', 'full_name' => 'PRIVATE_FULL_NAME',
+            'personnel_number' => '001234', 'synced_at' => now()]);
+        $user->portalCredentials()->create(['portal' => 'rossiya_edu', 'login' => 'different-login',
+            'password_encrypted' => 'not-a-real-password', 'key_version' => 1, 'status' => 'active']);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $response = $this->actingAs($manager)->getJson('/api/admin/users')->assertOk()->assertDontSee('PRIVATE_FULL_NAME');
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+        $rows = collect($response->json());
+        $this->assertSame('001234', $rows->firstWhere('id', $user->id)['personnel_number']);
+        $this->assertNull($rows->firstWhere('id', $manager->id)['personnel_number']);
+        $this->assertCount(1, array_filter($queries, fn ($query) => str_contains($query['query'], 'portal_profiles')));
+        $this->patchJson('/api/admin/users/'.$user->id, ['status' => 'active'])->assertOk()
+            ->assertJsonPath('personnel_number', '001234')->assertDontSee('PRIVATE_FULL_NAME');
+    }
+
     public function test_protected_roles_last_admin_and_blocked_accounts(): void
     {
         $admin = User::create(['role' => 'admin']);

@@ -22,7 +22,7 @@ class AdminUserController extends Controller
 
         return response()->json(User::query()
             ->whereDoesntHave('roles', fn ($query) => $query->where('key', 'administrator'))
-            ->with(['roles', 'portalCredentials:id,user_id,login,status', 'telegramAccounts:id,user_id,telegram_id,username'])
+            ->with(['roles', 'portalCredentials:id,user_id,login,status', 'portalProfile:user_id,personnel_number', 'telegramAccounts:id,user_id,telegram_id,username'])
             ->with(['subscriptionPayments' => fn ($query) => $query->whereNull('canceled_at')->select('id', 'user_id', 'starts_at', 'ends_at', 'canceled_at')])
             ->orderByRaw("CASE WHEN status = 'pending' THEN 0 ELSE 1 END")
             ->orderBy('display_name')->orderBy('id')->get()
@@ -79,7 +79,7 @@ class AdminUserController extends Controller
             }
         });
 
-        return response()->json($this->userData($user->fresh(['roles', 'portalCredentials', 'telegramAccounts'])));
+        return response()->json($this->userData($user->fresh(['roles', 'portalCredentials', 'portalProfile:user_id,personnel_number', 'telegramAccounts'])));
     }
 
     private function userData(User $user): array
@@ -96,6 +96,7 @@ class AdminUserController extends Controller
             'roles' => $user->roles->map(fn (Role $role) => ['id' => $role->id, 'name' => $role->name, 'is_pilot_role' => $role->isPilotRole()])->values(),
             'permissions' => $user->effectivePermissions(),
             'portal_login' => $credential?->login, 'portal_status' => $credential?->status,
+            'personnel_number' => $user->portalProfile?->personnel_number,
             'telegram_id' => $telegram?->telegram_id, 'telegram_username' => $telegram?->username,
         ];
     }
