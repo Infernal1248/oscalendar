@@ -151,14 +151,14 @@ class AccountController extends Controller
         return response()->json(RosterChangeEvent::query()
             ->where('user_id', $request->user()->id)
             ->select([
-                'id', 'period', 'status', 'created_at', ...($fullAccess ? ['changes'] : []),
+                'id', 'period', 'status', 'created_at', 'changes',
                 'acknowledgement_requested_at', 'acknowledged_at', 'superseded_at',
             ])
             ->latest()
             ->get()->map(function ($event) use ($fullAccess) {
                 $data = $event->toArray();
-                $data['details_locked'] = ! $fullAccess;
-                if (! $fullAccess) $data['changes'] = [];
+                $data['details_locked'] = ! $fullAccess && $event->status !== 'pending';
+                if ($data['details_locked']) $data['changes'] = [];
                 return $data;
             }))->header('Cache-Control', 'private, no-store');
     }

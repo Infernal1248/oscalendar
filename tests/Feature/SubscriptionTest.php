@@ -216,10 +216,12 @@ class SubscriptionTest extends TestCase
         ]);
         $this->actingAs($user)->getJson('/api/account')->assertOk()->assertJsonPath('calendar_url', null)
             ->assertJsonPath('subscription.full_access', false)->assertDontSee($feed->token);
-        $this->getJson('/api/change-history')->assertOk()->assertJsonPath('0.changes', [])
-            ->assertJsonPath('0.details_locked', true)->assertDontSee('PRIVATE_CHANGE_DETAILS');
+        $this->getJson('/api/change-history')->assertOk()
+            ->assertJsonPath('0.details_locked', false)->assertSee('PRIVATE_CHANGE_DETAILS');
         $this->getJson('/api/workplan')->assertOk();
         $this->postJson('/api/change-history/'.$event->id.'/acknowledge')->assertStatus(202);
+        $this->getJson('/api/change-history')->assertOk()->assertJsonPath('0.status', 'acknowledgement_requested')
+            ->assertJsonPath('0.changes', [])->assertJsonPath('0.details_locked', true)->assertDontSee('PRIVATE_CHANGE_DETAILS');
         foreach (['deviations', 'green-zone', 'rrj-express'] as $report) {
             $this->getJson('/api/'.$report)->assertStatus(402);
             $this->getJson('/api/'.$report.'/metadata')->assertStatus(402);
@@ -237,6 +239,32 @@ class SubscriptionTest extends TestCase
         $user->update(['status' => 'blocked']);
         $this->assertFalse($user->fresh()->hasFullAccess());
         $this->get('/api/calendar/'.$feed->token.'.ics')->assertForbidden();
+    }
+
+    public function test_only_pending_change_details_are_free_and_other_users_changes_are_never_visible(): void
+    {
+        $user = $this->grantPermissions(User::create([]), ['history.view']);
+        $other = User::create([]);
+        $event = RosterChangeEvent::create([
+            'user_id' => $user->id, 'source' => 'rossiya_edu', 'period' => '2026-09', 'status' => 'pending',
+            'change_hash' => str_repeat('b', 64), 'changes' => [['secret' => 'OWN_CHANGE_DETAILS']],
+        ]);
+        RosterChangeEvent::create([
+            'user_id' => $other->id, 'source' => 'rossiya_edu', 'period' => '2026-09', 'status' => 'pending',
+            'change_hash' => str_repeat('c', 64), 'changes' => [['secret' => 'OTHER_USER_DETAILS']],
+        ]);
+        $this->actingAs($user);
+        foreach ([false, true] as $premium) {
+            if ($premium) $this->grantSubscription($user);
+            foreach (['pending', 'acknowledgement_requested', 'acknowledged', 'superseded'] as $status) {
+                $event->update(['status' => $status]);
+                $locked = ! $premium && $status !== 'pending';
+                $response = $this->getJson('/api/change-history')->assertOk()->assertJsonCount(1)
+                    ->assertJsonPath('0.details_locked', $locked)->assertDontSee('OTHER_USER_DETAILS');
+                if ($locked) $response->assertJsonPath('0.changes', [])->assertDontSee('OWN_CHANGE_DETAILS');
+                else $response->assertJsonPath('0.changes.0.secret', 'OWN_CHANGE_DETAILS');
+            }
+        }
     }
 
     public function test_preview_copy_follows_job_role_without_exposing_the_role_key(): void
