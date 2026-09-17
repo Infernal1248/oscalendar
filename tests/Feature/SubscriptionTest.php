@@ -28,7 +28,7 @@ class SubscriptionTest extends TestCase
     private function payment(array $replace = []): array
     {
         return array_replace(['request_id' => (string) Str::uuid(), 'amount' => '199,90',
-            'duration_days' => 30, 'paid_at' => now()->subHour()->toIso8601String(), 'comment' => 'Private admin note'], $replace);
+            'duration_days' => 30, 'paid_at' => now()->toDateString(), 'comment' => 'Private admin note'], $replace);
     }
 
     public function test_mysql_migration_uses_explicit_datetime_columns_for_payment_dates(): void
@@ -85,6 +85,24 @@ class SubscriptionTest extends TestCase
         $this->assertFalse($user->hasFullAccess());
     }
 
+    public function test_payment_date_has_no_time_and_does_not_backdate_access(): void
+    {
+        Carbon::setTestNow('2026-09-17 20:00:00');
+        $admin = User::create(['role' => 'admin', 'timezone' => 'Asia/Krasnoyarsk']);
+        $user = User::create(['timezone' => 'America/Los_Angeles']);
+        $url = "/api/admin/users/{$user->id}/subscription/payments";
+        $this->actingAs($admin)->postJson($url, $this->payment(['paid_at' => '2026-09-01']))
+            ->assertOk()->assertJsonPath('payments.data.0.paid_at', '2026-09-01')
+            ->assertJsonPath('payments.data.0.starts_at', now()->toJSON());
+        $this->getJson('/api/admin/users/'.$user->id.'/subscription')
+            ->assertJsonPath('payments.data.0.paid_at', '2026-09-01');
+        $this->actingAs($user)->getJson('/api/subscription')->assertJsonPath('payments.data.0.paid_at', '2026-09-01');
+        // The administrator's calendar date is already September 18, unlike UTC.
+        $this->actingAs($admin)->postJson($url, $this->payment(['paid_at' => '2026-09-18']))
+            ->assertOk()->assertJsonPath('payments.data.0.paid_at', '2026-09-18');
+        $this->postJson($url, $this->payment(['paid_at' => '2026-09-19']))->assertUnprocessable();
+    }
+
     public function test_only_admin_can_record_or_cancel_payments_and_users_only_see_their_history(): void
     {
         $admin = User::create(['role' => 'admin']);
@@ -100,7 +118,8 @@ class SubscriptionTest extends TestCase
             ->assertJsonMissingPath('payments.data.0.comment')->assertJsonMissingPath('payments.data.0.recorded_by');
         $this->actingAs($admin)->postJson("/api/admin/users/{$other->id}/subscription/payments/{$payment['id']}/cancel", ['reason' => 'wrong user'])->assertNotFound();
         foreach ([['amount' => '0'], ['amount' => '-1'], ['amount' => '1.123'], ['duration_days' => 31],
-            ['paid_at' => now()->addDay()->toIso8601String()], ['starts_at' => now()->addDay()->toIso8601String()]] as $invalid) {
+            ['paid_at' => now()->addDay()->toDateString()], ['paid_at' => now()->toIso8601String()],
+            ['starts_at' => now()->subDay()->toIso8601String()]] as $invalid) {
             $this->postJson($url.'/payments', $this->payment($invalid))->assertUnprocessable();
         }
         $this->postJson($url.'/payments/'.$payment['id'].'/cancel', [])->assertUnprocessable();

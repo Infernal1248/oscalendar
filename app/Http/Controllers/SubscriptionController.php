@@ -30,33 +30,31 @@ class SubscriptionController extends Controller
             'request_id' => ['required', 'uuid'],
             'amount' => ['required', 'string', 'regex:/\A\d{1,7}(?:[.,]\d{1,2})?\z/'],
             'duration_days' => ['required', 'integer', Rule::in(array_keys(SubscriptionPayment::PLANS))],
-            'paid_at' => ['required', 'date', 'before_or_equal:now'],
-            'starts_at' => ['nullable', 'date', 'before_or_equal:now'],
+            'paid_at' => ['required', 'date_format:Y-m-d', 'before_or_equal:'.now($request->user()->timezone)->toDateString()],
+            'starts_at' => ['prohibited'],
             'comment' => ['nullable', 'string', 'max:1000'],
         ]);
         [$rubles, $kopecks] = array_pad(explode('.', str_replace(',', '.', $data['amount'])), 2, '');
         $amount = (int) $rubles * 100 + (int) str_pad($kopecks, 2, '0');
         abort_if($amount < 1, 422, 'Сумма должна быть больше нуля.');
-        $paidAt = Carbon::parse($data['paid_at'])->utc()->startOfSecond();
-        $requestedStart = ! empty($data['starts_at']) ? Carbon::parse($data['starts_at'])->utc()->startOfSecond() : null;
+        $paidAt = Carbon::parse($data['paid_at'], 'UTC')->startOfDay();
 
-        DB::transaction(function () use ($request, $user, $data, $amount, $paidAt, $requestedStart) {
+        DB::transaction(function () use ($request, $user, $data, $amount, $paidAt) {
             User::query()->lockForUpdate()->findOrFail($user->id);
             $existing = SubscriptionPayment::where('request_id', $data['request_id'])->first();
             if ($existing) {
                 abort_unless($existing->user_id === $user->id && $existing->amount_kopecks === $amount
-                    && $existing->duration_days === (int) $data['duration_days'] && $existing->paid_at->equalTo($paidAt)
-                    && $existing->requested_starts_at?->toDateTimeString() === $requestedStart?->toDateTimeString()
+                    && $existing->duration_days === (int) $data['duration_days'] && $existing->paid_at->toDateString() === $paidAt->toDateString()
                     && $existing->comment === ($data['comment'] ?? null), 409, 'Этот запрос уже использован для другой оплаты.');
                 return;
             }
-            $start = $requestedStart?->copy() ?? now()->utc();
+            $start = now()->utc();
             $lastEnd = $user->subscriptionPayments()->whereNull('canceled_at')->max('ends_at');
             if ($lastEnd && Carbon::parse($lastEnd, 'UTC')->greaterThan($start)) $start = Carbon::parse($lastEnd, 'UTC');
             $user->subscriptionPayments()->create([
                 'request_id' => $data['request_id'], 'source' => 'manual', 'amount_kopecks' => $amount,
                 'duration_days' => $data['duration_days'], 'paid_at' => $paidAt,
-                'requested_starts_at' => $requestedStart, 'starts_at' => $start,
+                'starts_at' => $start,
                 'ends_at' => $start->copy()->addDays((int) $data['duration_days']),
                 'recorded_by' => $request->user()->id, 'comment' => $data['comment'] ?? null,
             ]);
