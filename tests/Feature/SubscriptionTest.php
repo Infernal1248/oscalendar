@@ -31,6 +31,31 @@ class SubscriptionTest extends TestCase
             'duration_days' => 30, 'paid_at' => now()->subHour()->toIso8601String(), 'comment' => 'Private admin note'], $replace);
     }
 
+    public function test_mysql_migration_uses_explicit_datetime_columns_for_payment_dates(): void
+    {
+        $schema = \Illuminate\Support\Facades\Schema::getFacadeRoot();
+        $connection = new \Illuminate\Database\MySqlConnection(
+            fn () => throw new \LogicException('SQL compilation must not connect to a database.'), 'schema_test'
+        );
+        try {
+            \Illuminate\Support\Facades\Schema::swap($connection->getSchemaBuilder());
+            $queries = $connection->pretend(function () {
+                $migration = require database_path('migrations/2026_09_17_120000_create_subscription_payments_table.php');
+                $migration->up();
+            });
+            $sql = implode("\n", array_column($queries, 'query'));
+            foreach (['paid_at', 'starts_at', 'ends_at'] as $field) {
+                $this->assertStringContainsString("`$field` datetime not null", $sql);
+            }
+            foreach (['requested_starts_at', 'canceled_at'] as $field) {
+                $this->assertStringContainsString("`$field` datetime null", $sql);
+            }
+            $this->assertStringNotContainsString('timestamp not null', $sql);
+        } finally {
+            \Illuminate\Support\Facades\Schema::swap($schema);
+        }
+    }
+
     public function test_manual_payments_extend_once_and_cancellation_preserves_audit_and_other_periods(): void
     {
         $admin = User::create(['role' => 'admin']);

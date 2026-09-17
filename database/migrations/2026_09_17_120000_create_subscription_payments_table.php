@@ -14,13 +14,13 @@ return new class extends Migration {
             $table->string('source', 32)->default('manual');
             $table->unsignedBigInteger('amount_kopecks');
             $table->unsignedSmallInteger('duration_days');
-            $table->timestamp('paid_at');
-            $table->timestamp('requested_starts_at')->nullable();
-            $table->timestamp('starts_at');
-            $table->timestamp('ends_at');
+            $table->dateTime('paid_at');
+            $table->dateTime('requested_starts_at')->nullable();
+            $table->dateTime('starts_at');
+            $table->dateTime('ends_at');
             $table->foreignId('recorded_by')->constrained('users')->restrictOnDelete();
             $table->text('comment')->nullable();
-            $table->timestamp('canceled_at')->nullable();
+            $table->dateTime('canceled_at')->nullable();
             $table->foreignId('canceled_by')->nullable()->constrained('users')->restrictOnDelete();
             $table->text('cancel_reason')->nullable();
             $table->timestamps();
