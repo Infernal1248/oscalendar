@@ -326,7 +326,7 @@ class ParserTaskFlowTest extends TestCase
             'result' => ['message_id' => 501],
         ]));
 
-        $admin = User::query()->create(['display_name' => 'Admin', 'status' => 'active']);
+        $admin = User::query()->create(['display_name' => 'Admin', 'status' => 'active', 'role' => 'admin']);
         TelegramAccount::query()->create([
             'user_id' => $admin->id,
             'telegram_id' => 100001,

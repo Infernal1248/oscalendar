@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class AdminUserController extends Controller
@@ -58,6 +59,7 @@ class AdminUserController extends Controller
             $target = User::with('roles')->lockForUpdate()->findOrFail($user->id);
             abort_if($target->isAdmin() && ! $actor->isAdmin(), 403, 'Управлять администратором может только администратор.');
             $status = $data['status'] ?? $target->status;
+            $approved = $target->status === 'pending' && $status === 'active';
             $pilotRole = array_key_exists('pilot_role', $data) ? $data['pilot_role'] : $target->pilotRole();
             $roleIds = array_map('intval', $data['role_ids'] ?? $target->roles->modelKeys());
             if ($target->isAdmin() && $target->status === 'active'
@@ -76,6 +78,18 @@ class AdminUserController extends Controller
             }
             if ($status !== 'active') {
                 $target->tokens()->delete();
+            }
+            if ($approved) {
+                DB::afterCommit(function () use ($target) {
+                    if (! $target->telegramAccounts()->exists()) return;
+                    try {
+                        app(\App\Services\Telegram\TelegramBotService::class)->notifyApproved($target->fresh());
+                    } catch (\Throwable $exception) {
+                        Log::warning('Could not send user approval notification', [
+                            'user_id' => $target->id, 'exception' => get_class($exception),
+                        ]);
+                    }
+                });
             }
         });
 

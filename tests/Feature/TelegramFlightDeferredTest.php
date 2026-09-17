@@ -161,7 +161,7 @@ class TelegramFlightDeferredTest extends TestCase
         Http::assertSent(fn ($request) => str_ends_with($request->url(), '/sendMessage')
             && $request['chat_id'] === $account->telegram_id
             && $request['text'] === 'Данные рейса не найдены.');
-        Http::assertNotSent(fn ($request) => $request['chat_id'] === $account->telegram_id
+        Http::assertNotSent(fn ($request) => ($request['chat_id'] ?? null) === $account->telegram_id
             && str_contains((string) ($request['text'] ?? ''), 'Private defect'));
     }
 

@@ -264,6 +264,11 @@ class TelegramBotService
 
     private function handleUserText(int $chatId, TelegramAccount $account, string $text): void
     {
+        if (in_array($text, ['Список рейсов', 'Ближайшее кольцо', 'Ближайший рейс'], true)
+            && ! $account->user->hasPermission('workplan.view')) {
+            $this->client->sendMessage($chatId, 'Недостаточно прав.', ['reply_markup' => $this->mainKeyboard($account)]);
+            return;
+        }
         switch ($text) {
             case 'Список рейсов':
                 $this->sendRosterList($chatId, $account);
@@ -310,6 +315,13 @@ class TelegramBotService
             return;
         }
 
+        $permission = str_starts_with($data, 'roster.ack:') ? 'history.view'
+            : ((str_starts_with($data, 'details.flight:') || str_starts_with($data, 'deferred.')) ? 'workplan.view' : null);
+        if ($permission && ! $account->user->hasPermission($permission)) {
+            $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Недостаточно прав.');
+            return;
+        }
+
         if (preg_match('/^admin\.(approve|classify):(\d+)(?::(pilot|unit-head|senior-leader))?$/', $data, $matches)) {
             if (! $this->canApproveUsers($account)) {
                 $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Недостаточно прав.');
@@ -325,7 +337,7 @@ class TelegramBotService
                 return;
             }
 
-            if ($pendingAccount->user->isAdmin() && ! $this->isAdmin($account) && ! $account->user->isAdmin()) {
+            if ($pendingAccount->user->isAdmin() && ! $this->isAdmin($account)) {
                 $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Недостаточно прав.');
                 return;
             }
@@ -393,17 +405,24 @@ class TelegramBotService
             $actor = $account->fresh('user.roles');
             $target = User::with('roles')->lockForUpdate()->find($targetAccount->user_id);
             if (! $actor || ! $this->canApproveUsers($actor)
-                || ($target?->isAdmin() && ! $this->isAdmin($actor) && ! $actor->user->isAdmin())) return 'Недостаточно прав.';
+                || ($target?->isAdmin() && ! $this->isAdmin($actor))) return 'Недостаточно прав.';
             if (! $target || $target->status !== 'pending') return 'Заявка уже обработана.';
             $target->forceFill(['status' => 'active'])->save();
             return null;
         });
         if ($result !== null) return $result;
-        $targetAccount->load('user.roles');
-        $this->client->sendMessage((int) $targetAccount->telegram_id, 'Доступ одобрен. Можно пользоваться меню.', [
-            'reply_markup' => $this->mainKeyboard($targetAccount),
-        ]);
+        $this->notifyApproved($targetAccount->user->fresh());
         return 'Пользователь одобрен.';
+    }
+
+    public function notifyApproved(User $user): void
+    {
+        foreach ($user->telegramAccounts()->with('user.roles')->get() as $account) {
+            if (! $this->isActiveUser($account)) continue;
+            $this->client->sendMessage((int) $account->telegram_id, 'Доступ одобрен. Можно пользоваться меню.', [
+                'reply_markup' => $this->mainKeyboard($account),
+            ]);
+        }
     }
 
     private function sendRosterList(int $chatId, TelegramAccount $account): void
@@ -802,11 +821,12 @@ class TelegramBotService
 
     private function mainKeyboard(TelegramAccount $account): array
     {
-        $keyboard = [
-            [['text' => 'Список рейсов']],
-            [['text' => 'Ближайшее кольцо'], ['text' => 'Ближайший рейс']],
-            [['text' => 'Мой календарь'], ['text' => 'Сменить пароль']],
-        ];
+        $keyboard = [];
+        if ($account->user->hasPermission('workplan.view')) {
+            $keyboard[] = [['text' => 'Список рейсов']];
+            $keyboard[] = [['text' => 'Ближайшее кольцо'], ['text' => 'Ближайший рейс']];
+        }
+        $keyboard[] = [['text' => 'Мой календарь'], ['text' => 'Сменить пароль']];
 
         if ($this->canApproveUsers($account)) {
             $keyboard[] = [['text' => 'Заявки на доступ']];
@@ -897,13 +917,12 @@ class TelegramBotService
 
     private function isAdmin(TelegramAccount $account): bool
     {
-        return $account->is_admin && $this->isActiveUser($account);
+        return $this->isActiveUser($account) && $account->user->isAdmin();
     }
 
     private function canApproveUsers(TelegramAccount $account): bool
     {
-        return $this->isAdmin($account) || ($account->user?->hasPermission('users.view')
-            && $account->user->hasPermission('users.manage'));
+        return $account->user?->hasPermission('users.view') && $account->user->hasPermission('users.manage');
     }
 
     private function isActiveUser(TelegramAccount $account): bool

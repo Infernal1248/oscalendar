@@ -4,6 +4,8 @@ namespace App\Console\Commands;
 
 use App\Models\TelegramAccount;
 use App\Models\User;
+use App\Models\Role;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Console\Command;
 
 class TelegramMakeAdmin extends Command
@@ -18,26 +20,29 @@ class TelegramMakeAdmin extends Command
     {
         $telegramId = (int) $this->argument('telegram_id');
 
-        $account = TelegramAccount::query()->where('telegram_id', $telegramId)->with('user')->first();
+        DB::transaction(function () use ($telegramId) {
+            $adminRole = Role::lockAdministration();
+            $account = TelegramAccount::query()->where('telegram_id', $telegramId)->with('user')->first();
 
-        if (! $account) {
-            $user = User::query()->create([
-                'display_name' => $this->option('name') ?: null,
-                'status' => 'active',
-            ]);
+            if (! $account) {
+                $user = User::query()->create([
+                    'display_name' => $this->option('name') ?: null,
+                    'status' => 'active',
+                ]);
 
-            TelegramAccount::query()->create([
-                'user_id' => $user->id,
-                'telegram_id' => $telegramId,
-                'is_admin' => true,
-            ]);
-        } else {
-            $account->forceFill(['is_admin' => true])->save();
-            $account->user->forceFill([
-                'display_name' => $this->option('name') ?: $account->user->display_name,
-                'status' => 'active',
-            ])->save();
-        }
+                TelegramAccount::query()->create([
+                    'user_id' => $user->id,
+                    'telegram_id' => $telegramId,
+                ]);
+            } else {
+                $user = $account->user;
+                $user->forceFill([
+                    'display_name' => $this->option('name') ?: $user->display_name,
+                    'status' => 'active',
+                ])->save();
+            }
+            $user->roles()->syncWithoutDetaching([$adminRole->id]);
+        });
 
         $this->info('Telegram admin is ready.');
 

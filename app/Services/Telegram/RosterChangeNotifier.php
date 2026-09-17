@@ -14,6 +14,7 @@ class RosterChangeNotifier
 
     public function notifyPending(RosterChangeEvent $event): bool
     {
+        if (! $event->user()->first()?->hasPermission('history.view')) return true;
         $this->disableSupersededButtons($event);
         $messages = $event->telegram_messages ?? [];
         $deliveredChats = array_column($messages, 'chat_id');
@@ -64,6 +65,7 @@ class RosterChangeNotifier
     public function notifyAcknowledged(RosterChangeEvent $event): bool
     {
         $this->removeButtons($event);
+        if (! $event->user()->first()?->hasPermission('history.view')) return true;
         $accounts = TelegramAccount::query()->where('user_id', $event->user_id)->get();
         $messages = $event->acknowledgement_messages ?? [];
         $deliveredChats = array_column($messages, 'chat_id');
