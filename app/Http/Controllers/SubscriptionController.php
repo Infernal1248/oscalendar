@@ -48,9 +48,10 @@ class SubscriptionController extends Controller
                     && $existing->comment === ($data['comment'] ?? null), 409, 'Этот запрос уже использован для другой оплаты.');
                 return;
             }
-            $start = now()->utc();
+            $start = $paidAt->copy();
             $lastEnd = $user->subscriptionPayments()->whereNull('canceled_at')->max('ends_at');
-            if ($lastEnd && Carbon::parse($lastEnd, 'UTC')->greaterThan($start)) $start = Carbon::parse($lastEnd, 'UTC');
+            $nextStart = $lastEnd ? Carbon::parse($lastEnd, 'UTC')->startOfDay()->addDay() : null;
+            if ($nextStart && $nextStart->greaterThan($start)) $start = $nextStart;
             $user->subscriptionPayments()->create([
                 'request_id' => $data['request_id'], 'source' => 'manual', 'amount_kopecks' => $amount,
                 'duration_days' => $data['duration_days'], 'paid_at' => $paidAt,

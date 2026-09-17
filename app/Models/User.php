@@ -71,28 +71,33 @@ class User extends Authenticatable
 
     public function hasFullAccess(): bool
     {
+        // Both calendar dates are inclusive, including for legacy rows with a time component.
         return $this->status === 'active' && ($this->isAdmin() || $this->subscriptionPayments()
-            ->whereNull('canceled_at')->where('starts_at', '<=', now())->where('ends_at', '>', now())->exists());
+            ->whereNull('canceled_at')->where('starts_at', '<', now('UTC')->startOfDay()->addDay())
+            ->where('ends_at', '>=', now('UTC')->startOfDay())->exists());
     }
 
     public function subscriptionSummary(): array
     {
-        $active = $this->subscriptionPayments()->whereNull('canceled_at')
-            ->where('starts_at', '<=', now())->where('ends_at', '>', now())->orderByDesc('ends_at')->first();
-        $until = $active?->ends_at?->copy();
+        $payments = $this->relationLoaded('subscriptionPayments')
+            ? $this->subscriptionPayments->whereNull('canceled_at')->sortBy('starts_at')
+            : $this->subscriptionPayments()->whereNull('canceled_at')->orderBy('starts_at')->get(['id', 'user_id', 'starts_at', 'ends_at']);
+        $today = now('UTC')->toDateString();
+        $active = $payments->first(fn ($payment) => $payment->starts_at->toDateString() <= $today && $payment->ends_at->toDateString() >= $today);
+        $until = $active?->ends_at?->copy()->startOfDay();
         if ($until) {
             // Extend the displayed end only through contiguous, non-canceled paid periods.
-            foreach ($this->subscriptionPayments()->whereNull('canceled_at')->where('starts_at', '>', now())->orderBy('starts_at')->get() as $payment) {
-                if ($payment->starts_at->greaterThan($until)) break;
-                if ($payment->ends_at->greaterThan($until)) $until = $payment->ends_at->copy();
+            foreach ($payments as $payment) {
+                if ($payment->starts_at->toDateString() > $until->copy()->addDay()->toDateString()) break;
+                if ($payment->ends_at->greaterThan($until)) $until = $payment->ends_at->copy()->startOfDay();
             }
         }
         return [
             'full_access' => $this->status === 'active' && ($this->isAdmin() || $active !== null),
             'status' => $this->isAdmin() ? 'included' : ($active ? 'active' : 'basic'),
-            'paid_until' => $until?->toIso8601String(),
-            'extension_from' => ($lastEnd = $this->subscriptionPayments()->whereNull('canceled_at')->max('ends_at'))
-                ? \Illuminate\Support\Carbon::parse($lastEnd, 'UTC')->toIso8601String() : null,
+            'paid_until' => $until?->toDateString(),
+            'extension_from' => ($lastEnd = $payments->max('ends_at'))
+                ? $lastEnd->copy()->addDay()->toDateString() : null,
         ];
     }
 

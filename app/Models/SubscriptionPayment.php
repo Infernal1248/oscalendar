@@ -11,7 +11,7 @@ class SubscriptionPayment extends Model
     protected $guarded = ['id'];
     protected $casts = [
         'amount_kopecks' => 'integer', 'duration_days' => 'integer',
-        'paid_at' => 'date:Y-m-d', 'starts_at' => 'datetime',
-        'ends_at' => 'datetime', 'canceled_at' => 'datetime',
+        'paid_at' => 'date:Y-m-d', 'starts_at' => 'date:Y-m-d',
+        'ends_at' => 'date:Y-m-d', 'canceled_at' => 'datetime',
     ];
 }

@@ -23,6 +23,7 @@ class AdminUserController extends Controller
         return response()->json(User::query()
             ->whereDoesntHave('roles', fn ($query) => $query->where('key', 'administrator'))
             ->with(['roles', 'portalCredentials:id,user_id,login,status', 'telegramAccounts:id,user_id,telegram_id,username'])
+            ->with(['subscriptionPayments' => fn ($query) => $query->whereNull('canceled_at')->select('id', 'user_id', 'starts_at', 'ends_at', 'canceled_at')])
             ->orderByRaw("CASE WHEN status = 'pending' THEN 0 ELSE 1 END")
             ->orderBy('display_name')->orderBy('id')->get()
             ->map(fn (User $user) => $this->userData($user)));
@@ -89,6 +90,7 @@ class AdminUserController extends Controller
         return [
             'id' => $user->id, 'display_name' => $user->display_name, 'status' => $user->status,
             'is_admin' => $user->isAdmin(),
+            'subscription_paid_until' => $user->subscriptionSummary()['paid_until'],
             'pilot_role' => $user->pilotRole(), 'unit_number' => $user->unit_number,
             'roles' => $user->roles->map(fn (Role $role) => ['id' => $role->id, 'name' => $role->name])->values(),
             'permissions' => $user->effectivePermissions(),
