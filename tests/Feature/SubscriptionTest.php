@@ -88,6 +88,27 @@ class SubscriptionTest extends TestCase
         $this->assertFalse($user->hasFullAccess());
     }
 
+    public function test_admin_can_grant_free_premium_with_a_zero_amount_and_cancel_it(): void
+    {
+        $admin = User::create(['role' => 'admin']);
+        $user = User::create([]);
+        $url = "/api/admin/users/{$user->id}/subscription/payments";
+        $payload = $this->payment(['amount' => '0', 'duration_days' => 365, 'comment' => 'Подарок']);
+        $payment = $this->actingAs($admin)->postJson($url, $payload)->assertOk()
+            ->assertJsonPath('subscription.full_access', true)
+            ->assertJsonPath('subscription.paid_until', '2027-09-17')
+            ->assertJsonPath('payments.data.0.amount_kopecks', 0)
+            ->assertJsonPath('payments.data.0.recorded_by', $admin->id)
+            ->assertJsonPath('payments.data.0.comment', 'Подарок')->json('payments.data.0');
+        $this->postJson($url, $payload)->assertOk();
+        $this->assertDatabaseCount('subscription_payments', 1);
+        $this->actingAs($user)->getJson('/api/subscription')->assertOk()
+            ->assertJsonPath('subscription.full_access', true)
+            ->assertJsonPath('payments.data.0.amount_kopecks', 0);
+        $this->actingAs($admin)->postJson($url.'/'.$payment['id'].'/cancel', ['reason' => 'Ошибка'])
+            ->assertOk()->assertJsonPath('subscription.full_access', false);
+    }
+
     public function test_payment_date_sets_the_start_day_without_a_timezone_shift(): void
     {
         Carbon::setTestNow('2026-09-17 20:00:00');
@@ -144,7 +165,7 @@ class SubscriptionTest extends TestCase
         $this->actingAs($user)->getJson('/api/subscription')->assertJsonPath('payments.total', 1)
             ->assertJsonMissingPath('payments.data.0.comment')->assertJsonMissingPath('payments.data.0.recorded_by');
         $this->actingAs($admin)->postJson("/api/admin/users/{$other->id}/subscription/payments/{$payment['id']}/cancel", ['reason' => 'wrong user'])->assertNotFound();
-        foreach ([['amount' => '0'], ['amount' => '-1'], ['amount' => '1.123'], ['duration_days' => 31],
+        foreach ([['amount' => ''], ['amount' => null], ['amount' => '-1'], ['amount' => '1.123'], ['duration_days' => 31],
             ['paid_at' => now()->addDay()->toDateString()], ['paid_at' => now()->toIso8601String()],
             ['starts_at' => now()->subDay()->toIso8601String()]] as $invalid) {
             $this->postJson($url.'/payments', $this->payment($invalid))->assertUnprocessable();

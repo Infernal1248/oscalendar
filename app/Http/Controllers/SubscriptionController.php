@@ -36,7 +36,6 @@ class SubscriptionController extends Controller
         ]);
         [$rubles, $kopecks] = array_pad(explode('.', str_replace(',', '.', $data['amount'])), 2, '');
         $amount = (int) $rubles * 100 + (int) str_pad($kopecks, 2, '0');
-        abort_if($amount < 1, 422, 'Сумма должна быть больше нуля.');
         $paidAt = Carbon::parse($data['paid_at'], 'UTC')->startOfDay();
 
         DB::transaction(function () use ($request, $user, $data, $amount, $paidAt) {
