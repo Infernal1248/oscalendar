@@ -94,6 +94,21 @@ class RoleAccessTest extends TestCase
         $this->assertDatabaseHas('role_user', ['user_id' => $promoted->id, 'role_id' => Role::where('key', 'administrator')->sole()->id]);
     }
 
+    public function test_user_list_separates_position_from_access_roles_for_viewers(): void
+    {
+        $viewer = $this->grantPermissions(User::create([]), ['users.view']);
+        $user = User::create([]);
+        $user->roles()->attach(Role::where('key', 'unit-head')->sole()->id);
+        $user->forceFill(['unit_number' => 'ЛО4 RRJ-95'])->save();
+        $rows = $this->actingAs($viewer)->getJson('/api/admin/users')->assertOk()->json();
+        $row = collect($rows)->firstWhere('id', $user->id);
+        $this->assertSame('Руководитель подразделения', $row['pilot_role_name']);
+        $this->assertSame('ЛО4 RRJ-95', $row['unit_number']);
+        $this->assertSame(['Руководитель подразделения'], collect($row['roles'])->where('is_pilot_role', true)->pluck('name')->values()->all());
+        $this->assertSame(['Пользователь'], collect($row['roles'])->where('is_pilot_role', false)->pluck('name')->values()->all());
+        $this->assertNull(collect($rows)->firstWhere('id', $viewer->id)['pilot_role_name']);
+    }
+
     public function test_protected_roles_last_admin_and_blocked_accounts(): void
     {
         $admin = User::create(['role' => 'admin']);

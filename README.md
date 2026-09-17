@@ -4,7 +4,7 @@ Laravel backend for parser sync, Telegram bot state, and private calendar feeds.
 
 ## Подписка (ручной учёт оплат)
 
-Администратор в личном кабинете открывает **Пользователи → Добавить оплату** и вносит подтверждённую
+Администратор в личном кабинете открывает **Пользователи → Действия → Добавить оплату** и вносит подтверждённую
 оплату: сумму в рублях, дату оплаты без времени и срок 30/90/180/365 дней. Можно добавить
 комментарий. Начало доступа — указанная дата оплаты; при продлении — следующий день после
 последнего неотменённого оплаченного периода, если он позже даты оплаты. Финальная дата —
@@ -15,7 +15,7 @@ API возвращает дату оплаты и даты периода как
 но время начала/окончания внутри дня больше не ограничивает доступ. Миграция не требуется.
 Повтор запроса с тем же `request_id` не начисляет срок дважды.
 
-По отдельной кнопке **История оплат** ошибочную запись можно отменить с причиной. История, автор и причина сохраняются;
+В меню **Действия → История оплат** ошибочную запись можно отменить с причиной. История, автор и причина сохраняются;
 остальные оплаченные периоды **не сдвигаются**. Отмена записи не возвращает деньги.
 Полномочий «Управление пользователями» недостаточно для внесения и отмены оплат — нужен администратор.
 
@@ -242,7 +242,7 @@ php artisan optimize:clear
 
 PhpSpreadsheet requires PHP extensions including `gd`, `zip`, `mbstring`, `dom`, `xmlreader` and `xmlwriter`; Composer checks the complete requirements. Configure PHP `upload_max_filesize` to at least `10M`, `post_max_size` above `10M`, and the web server body limit accordingly.
 
-Administrators have access automatically. Grant ordinary users the **Просмотр отклонений** or **Импорт отклонений** role through **Пользователи → Настроить**. These roles contain the following permissions (none are enabled for the basic user role):
+Administrators have access automatically. Grant ordinary users the **Просмотр отклонений** or **Импорт отклонений** role through **Пользователи → Действия → Настройка пользователя**. These roles contain the following permissions (none are enabled for the basic user role):
 
 - `deviations.view`: page/navigation.
 - `deviations.read`: shared table, requires `deviations.view`.
