@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\Deviation;
+use App\Models\AirFase;
 use DateTimeImmutable;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -13,9 +13,9 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Shared\Date;
 use Throwable;
 
-class DeviationImporter
+class AirFaseImporter
 {
-    public function import(UploadedFile $file, int $userId, string $model = Deviation::class): array
+    public function import(UploadedFile $file, int $userId, string $model = AirFase::class): array
     {
         $records = $this->read($file->getPathname(), $model);
         $now = now();
@@ -54,7 +54,7 @@ class DeviationImporter
         return ['processed' => count($records), 'inserted' => $inserted, 'duplicates' => count($records) - $inserted];
     }
 
-    public function read(string $path, string $model = Deviation::class): array
+    public function read(string $path, string $model = AirFase::class): array
     {
         $book = null;
         try {

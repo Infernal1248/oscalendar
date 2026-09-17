@@ -52,7 +52,7 @@ class RoleController extends Controller
             'permissions' => ['present', 'array', 'max:100'],
             'permissions.*' => ['required', 'string', 'distinct', Rule::in($assignable)],
         ]);
-        foreach (['deviations.read' => 'deviations.view', 'deviations.import' => 'deviations.view',
+        foreach (['airfase.read' => 'airfase.view', 'airfase.import' => 'airfase.view',
             'green-zone.read' => 'green-zone.view', 'green-zone.import' => 'green-zone.view',
             'rrj-express.read' => 'rrj-express.view', 'rrj-express.import' => 'rrj-express.view', 'users.manage' => 'users.view'] as $permission => $required) {
             if (in_array($permission, $data['permissions'], true)) {

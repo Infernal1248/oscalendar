@@ -38,7 +38,7 @@ class AirfaseReportsTest extends TestCase
         $this->grantSubscription($user);
         $this->actingAs($user);
         foreach (['green-zone' => GreenZone::class, 'rrj-express' => RrjExpress::class] as $report => $model) {
-            $this->grantPermissions($user, ['deviations.view', 'deviations.read', 'deviations.import']);
+            $this->grantPermissions($user, ['airfase.view', 'airfase.read', 'airfase.import']);
             $this->getJson("/api/$report")->assertForbidden();
             $this->getJson("/api/$report/metadata")->assertForbidden();
             $this->postJson("/api/$report/import")->assertForbidden();
@@ -82,7 +82,7 @@ class AirfaseReportsTest extends TestCase
             $this->postJson("/api/$report/import", ['file' => $this->file($model, [$second, $invalid])])->assertUnprocessable();
             $this->assertSame(2, $model::count());
         }
-        $this->assertDatabaseCount('deviations', 0);
+        $this->assertDatabaseCount('airfase', 0);
         $this->assertDatabaseCount('rrj_express_events', 2);
         $this->assertDatabaseCount('green_zone_flights', 2);
     }
@@ -90,7 +90,7 @@ class AirfaseReportsTest extends TestCase
     public function test_import_invalidates_only_its_report_options_and_union_uses_those_caches(): void
     {
         $this->actingAs(User::create(['role' => 'admin', 'status' => 'active']));
-        $models = [\App\Models\Deviation::class, GreenZone::class, RrjExpress::class];
+        $models = [\App\Models\AirFase::class, GreenZone::class, RrjExpress::class];
         foreach ($models as $model) {
             $this->assertSame(array_fill_keys($model::OPTIONS, []), ReportFilterOptions::values($model));
         }

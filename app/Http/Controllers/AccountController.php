@@ -286,9 +286,9 @@ class AccountController extends Controller
                 'manage' => $user->hasPermission('users.view') && $user->hasPermission('users.manage'),
                 'assign_roles' => $user->isAdmin(),
             ],
-            'deviations_access' => [
-                'read' => $user->hasPermission('deviations.view') && $user->hasPermission('deviations.read'),
-                'import' => $user->hasPermission('deviations.view') && $user->hasPermission('deviations.import'),
+            'airfase_access' => [
+                'read' => $user->hasPermission('airfase.view') && $user->hasPermission('airfase.read'),
+                'import' => $user->hasPermission('airfase.view') && $user->hasPermission('airfase.import'),
             ],
             'reports_access' => collect(['green-zone', 'rrj-express'])->mapWithKeys(fn ($report) => [$report => [
                 'read' => $user->hasPermission("$report.view") && $user->hasPermission("$report.read"),
@@ -299,7 +299,7 @@ class AccountController extends Controller
                 in_array('dashboard.view', $permissions, true) ? 'dashboard' : null,
                 in_array('workplan.view', $permissions, true) ? 'workplan' : null,
                 in_array('history.view', $permissions, true) ? 'history' : null,
-                in_array('deviations.view', $permissions, true) ? 'deviations' : null,
+                in_array('airfase.view', $permissions, true) ? 'airfase' : null,
                 in_array('green-zone.view', $permissions, true) ? 'green-zone' : null,
                 in_array('rrj-express.view', $permissions, true) ? 'rrj-express' : null,
                 in_array('users.view', $permissions, true) ? 'admin.users' : null,

@@ -28,18 +28,18 @@ return [
             'description' => 'Просмотр изменений рабочего плана и времени их подтверждения.',
             'assignable' => true,
         ],
-        'deviations.view' => [
-            'name' => 'Отклонения: страница',
-            'description' => 'Открытие страницы отклонений. Чтение таблицы и импорт выдаются отдельно.',
+        'airfase.view' => [
+            'name' => 'AirFASE: страница',
+            'description' => 'Открытие страницы AirFASE. Чтение таблицы и импорт выдаются отдельно.',
             'assignable' => true,
         ],
-        'deviations.read' => [
-            'name' => 'Отклонения: таблица',
-            'description' => 'Просмотр общей базы отклонений, фильтрация и сортировка. Требует доступа к странице.',
+        'airfase.read' => [
+            'name' => 'AirFASE: таблица',
+            'description' => 'Просмотр общей базы AirFASE, фильтрация и сортировка. Требует доступа к странице.',
             'assignable' => true,
         ],
-        'deviations.import' => [
-            'name' => 'Отклонения: импорт',
+        'airfase.import' => [
+            'name' => 'AirFASE: импорт',
             'description' => 'Загрузка XLS/XLSX в общую базу. Требует доступа к странице.',
             'assignable' => true,
         ],

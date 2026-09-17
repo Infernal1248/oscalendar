@@ -206,7 +206,7 @@ class SubscriptionTest extends TestCase
     {
         $user = $this->grantPermissions(User::create([]), [
             'profile.view', 'workplan.view', 'history.view',
-            'deviations.view', 'deviations.read', 'deviations.import',
+            'airfase.view', 'airfase.read', 'airfase.import',
             'green-zone.view', 'green-zone.read', 'rrj-express.view', 'rrj-express.read',
         ]);
         $feed = CalendarFeed::create(['user_id' => $user->id, 'token' => 'PRIVATE_CALENDAR_TOKEN', 'is_active' => true]);
@@ -222,20 +222,20 @@ class SubscriptionTest extends TestCase
         $this->postJson('/api/change-history/'.$event->id.'/acknowledge')->assertStatus(202);
         $this->getJson('/api/change-history')->assertOk()->assertJsonPath('0.status', 'acknowledgement_requested')
             ->assertJsonPath('0.changes', [])->assertJsonPath('0.details_locked', true)->assertDontSee('PRIVATE_CHANGE_DETAILS');
-        foreach (['deviations', 'green-zone', 'rrj-express'] as $report) {
+        foreach (['airfase', 'green-zone', 'rrj-express'] as $report) {
             $this->getJson('/api/'.$report)->assertStatus(402);
             $this->getJson('/api/'.$report.'/metadata')->assertStatus(402);
         }
-        $this->postJson('/api/deviations/import', [])->assertUnprocessable(); // Import permission stays independent.
+        $this->postJson('/api/airfase/import', [])->assertUnprocessable(); // Import permission stays independent.
         $this->get('/api/calendar/'.$feed->token.'.ics')->assertForbidden();
         $admin = User::create(['role' => 'admin']);
         $this->actingAs($admin)->postJson("/api/admin/users/{$user->id}/subscription/payments", $this->payment())->assertOk();
         $this->actingAs($user)->getJson('/api/account')->assertJsonPath('subscription.full_access', true)->assertSee($feed->token);
         $this->getJson('/api/change-history')->assertJsonPath('0.details_locked', false)->assertSee('PRIVATE_CHANGE_DETAILS');
         $this->get('/api/calendar/'.$feed->token.'.ics')->assertOk();
-        foreach (['deviations', 'green-zone', 'rrj-express'] as $report) $this->getJson('/api/'.$report)->assertOk()->assertJsonPath('total', 0);
+        foreach (['airfase', 'green-zone', 'rrj-express'] as $report) $this->getJson('/api/'.$report)->assertOk()->assertJsonPath('total', 0);
         $this->grantPermissions($user, ['profile.view']);
-        $this->getJson('/api/deviations')->assertForbidden(); // Payment does not grant permissions.
+        $this->getJson('/api/airfase')->assertForbidden(); // Payment does not grant permissions.
         $user->update(['status' => 'blocked']);
         $this->assertFalse($user->fresh()->hasFullAccess());
         $this->get('/api/calendar/'.$feed->token.'.ics')->assertForbidden();

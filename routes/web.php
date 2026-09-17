@@ -14,6 +14,8 @@ use Illuminate\Support\Facades\Route;
 */
 
 // Only client-side pages return the SPA; API and missing assets keep their own responses.
+Route::redirect('/deviations', '/airfase', 301);
+
 Route::get('/{page?}', function () {
     $index = public_path('index.html');
     abort_unless(is_file($index), 503, 'Фронтенд не установлен. Загрузите содержимое dist в public.');
@@ -22,4 +24,4 @@ Route::get('/{page?}', function () {
         'Content-Type' => 'text/html; charset=UTF-8',
         'Cache-Control' => 'no-cache',
     ]);
-})->where('page', 'login|dashboard|profile|workplan|history|deviations|green-zone|rrj-express|admin/(users|permissions)');
+})->where('page', 'login|dashboard|profile|workplan|history|airfase|green-zone|rrj-express|admin/(users|permissions)');

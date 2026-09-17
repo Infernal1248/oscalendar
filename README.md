@@ -243,10 +243,25 @@ For REG.RU with PHP 8.4:
 /opt/php/8.4/bin/php artisan route:clear
 ```
 
-Check `/`, `/login`, and a reload on `/deviations`. An unauthenticated request to `/api/account`
+Check `/`, `/login`, and a reload on `/airfase`. An unauthenticated request to `/api/account`
 with `Accept: application/json` must still return 401, not the frontend HTML.
 
-## AirFASE deviations
+## AirFASE
+
+### Upgrade from the former deviations module
+
+Back up the database and deploy the backend and frontend together during a maintenance window (finish any running report import first). Migration `2026_09_17_140000_rename_deviations_to_airfase` renames the existing table to `airfase`, its indexes and MySQL foreign key, converts permission keys to `airfase.view/read/import` in every role and legacy user record, and renames the reader/importer role keys without changing their IDs or assignments. Default role labels become «Просмотр AirFASE» / «Импорт AirFASE»; custom labels are preserved. Rows, fingerprints and upload history are not rewritten. The old and new report-option caches are invalidated. Historical migrations deliberately retain their original names/schema; the new migration has a reverse `down()` for rollback together with the previous application release.
+
+After uploading the new backend code, refresh Composer's optimized autoloader and clear cached configuration/routes before migrating:
+
+```bash
+composer install --no-dev --optimize-autoloader
+/opt/php/8.4/bin/php artisan optimize:clear
+/opt/php/8.4/bin/php artisan migrate --force
+/opt/php/8.4/bin/php artisan config:cache
+```
+
+Then upload the matching frontend build before reopening access. The page and API now use `/airfase` and `/api/airfase`; `/account` returns `airfase_access` and the `airfase` navigation key. `/deviations` only redirects to `/airfase`; the old API is removed. Reload open browser tabs. Existing column preferences are read from the old browser key until the user next saves them under `oscalendar:airfase:columns:<user-id>`. No parser update is needed.
 
 Shared database, independent of the portal parser. Deploy the backend before the frontend:
 
@@ -258,23 +273,23 @@ php artisan optimize:clear
 
 PhpSpreadsheet requires PHP extensions including `gd`, `zip`, `mbstring`, `dom`, `xmlreader` and `xmlwriter`; Composer checks the complete requirements. Configure PHP `upload_max_filesize` to at least `10M`, `post_max_size` above `10M`, and the web server body limit accordingly.
 
-Administrators have access automatically. Grant ordinary users the **Просмотр отклонений** or **Импорт отклонений** role through **Пользователи → Действия → Настройка пользователя**. These roles contain the following permissions (none are enabled for the basic user role):
+Administrators have access automatically. Grant ordinary users the **Просмотр AirFASE** or **Импорт AirFASE** role through **Пользователи → Действия → Настройка пользователя**. These roles contain the following permissions (none are enabled for the basic user role):
 
-- `deviations.view`: page/navigation.
-- `deviations.read`: shared table, requires `deviations.view`.
-- `deviations.import`: upload, requires `deviations.view` but not `deviations.read`.
+- `airfase.view`: page/navigation.
+- `airfase.read`: shared table, requires `airfase.view`.
+- `airfase.import`: upload, requires `airfase.view` but not `airfase.read`.
 
 Authenticated API:
 
-- `POST /api/deviations/import`: multipart `file`, XLS/XLSX AirFASE report, up to 10 MiB. Returns `processed`, `inserted`, `duplicates`. Required headers are defined in `Deviation::COLUMNS`; event number/text/report count are inherited from group headings. Invalid rows reject the entire import. Formulas are not executed or accepted. The uploaded workbook is not archived: only normalized rows, original filename and uploader are stored.
-- `GET /api/deviations`: Laravel pagination (`data`, `total`, `current_page`, `last_page`, `per_page`). `page` defaults to 1, `per_page` to 50 (maximum 500). `sort_by` defaults to `flight_date`, `sort_order` to `desc`. `group_by` orders groups on the server, then the selected sort orders rows inside each group. Groups may continue across pages.
-- Filters: `date_from` / `date_to` in `YYYY-MM-DD`, plus `filters[field]` for any field in `Deviation::COLUMNS`. Text filters use literal substring matching, date and report count use equality; all conditions combine with AND. Sorting/grouping fields are allowlisted to the same columns.
+- `POST /api/airfase/import`: multipart `file`, XLS/XLSX AirFASE report, up to 10 MiB. Returns `processed`, `inserted`, `duplicates`. Required headers are defined in `AirFase::COLUMNS`; event number/text/report count are inherited from group headings. Invalid rows reject the entire import. Formulas are not executed or accepted. The uploaded workbook is not archived: only normalized rows, original filename and uploader are stored.
+- `GET /api/airfase`: Laravel pagination (`data`, `total`, `current_page`, `last_page`, `per_page`). `page` defaults to 1, `per_page` to 50 (maximum 500). `sort_by` defaults to `flight_date`, `sort_order` to `desc`. `group_by` orders groups on the server, then the selected sort orders rows inside each group. Groups may continue across pages.
+- Filters: `date_from` / `date_to` in `YYYY-MM-DD`, plus `filters[field]` for any field in `AirFase::COLUMNS`. Text filters use literal substring matching, date and report count use equality; all conditions combine with AND. Sorting/grouping fields are allowlisted to the same columns.
 
-Example: `/api/deviations?date_from=2025-12-01&date_to=2025-12-09&filters[event_number]=1004&group_by=aircraft_registration&sort_by=flight_date&sort_order=desc&per_page=100`.
+Example: `/api/airfase?date_from=2025-12-01&date_to=2025-12-09&filters[event_number]=1004&group_by=aircraft_registration&sort_by=flight_date&sort_order=desc&per_page=100`.
 
 Deduplication uses a unique SHA-256 key over the normalized event fields, excluding the report count, filename, uploader and import timestamps. Thus weekly/monthly overlap is skipped even if report totals differ. The first report count is retained as source metadata, not a live count of filtered results. The export has no unique occurrence ID: identical event rows are considered the same occurrence; rows with different actual values remain distinct. A malformed file does not modify existing records.
 
-Run the API/import checks with `php artisan test --filter=DeviationApiTest`. Optionally set `AIRFASE_SAMPLE` to a local AirFASE export to test importing it twice against an in-memory test database; personal exports are not committed.
+Run the API/import checks with `php artisan test --filter=AirFaseApiTest`. Optionally set `AIRFASE_SAMPLE` to a local AirFASE export to test importing it twice against an in-memory test database; personal exports are not committed.
 
 ## Roles and permissions
 
@@ -285,7 +300,7 @@ can be selected. Individual `users.permissions` is retained for migration/rollba
 is no longer an authorization source. Legacy `users.role` still distinguishes the original
 local admin account from portal accounts for login/calendar setup; it no longer grants web admin access.
 
-Initial roles: **Пользователь**, **Просмотр отклонений**, **Импорт отклонений**,
+Initial roles: **Пользователь**, **Просмотр AirFASE**, **Импорт AirFASE**,
 **Просмотр пользователей**, **Управление пользователями**, **Администратор**.
 New accounts get the basic role, but permissions are inactive until approval (`status=active`).
 The profile is always available to active users. Blocked, banned and pending users have no effective permissions.
@@ -312,7 +327,7 @@ rename or replace later. Existing account IDs, portal credentials and Telegram l
 Admin API: `GET/POST /api/admin/roles`, `PATCH/DELETE /api/admin/roles/{id}`,
 `GET /api/admin/permissions` (read-only catalog), and `PATCH /api/admin/users/{id}`
 with optional `status` and `role_ids`. Old `permissions`/`role` payloads are rejected.
-Role writes take `{name, description, permissions}`. Prerequisites `deviations.view` and
+Role writes take `{name, description, permissions}`. Prerequisites `airfase.view` and
 `users.view` are automatically included when dependent permissions are selected.
 
 Deploy backend and frontend together: back up the database, enter Laravel maintenance mode,
@@ -321,7 +336,7 @@ the new frontend build into `public`, then `php artisan up`. On REG.RU invoke ar
 `/opt/php/8.4/bin/php`. No new Composer/NPM dependencies are required. The portal parser code is unchanged.
 Reload existing browser tabs so their navigation and user-management forms use the new API.
 
-Checks: `php artisan test --filter='RoleAccessTest|AccountApiTest|DeviationApiTest'`;
+Checks: `php artisan test --filter='RoleAccessTest|AccountApiTest|AirFaseApiTest'`;
 frontend `tests/roles.browser.mjs` exercises the UI against mocked APIs in Vite preview.
 
 ## Internal API service token
@@ -712,7 +727,7 @@ On REG.RU, from the Laravel project directory:
 Upload the new frontend `dist` contents to `public`, preserving `index.php` and `.htaccess`. No new Composer or Python dependencies are required. Reload existing browser tabs after deployment.
 
 - `/green-zone` and `/rrj-express` have separate tables and opt-in reader/importer roles. Existing ordinary users are not granted these roles by the migration. Admin assigns them in user settings. XLS/XLSX imports use the common reader, validate all rows before writing and skip duplicate fingerprints, excluding export-period event totals. Files must have the matching report's headers; `.xlsx.xls` is detected by content. Without an occurrence ID, identical event rows cannot be distinguished; corrected rows are new records, not edits to previous imports.
-- `GET /api/{deviations|green-zone|rrj-express}/metadata` supplies column definitions, numeric fields and distinct dropdown options shared by all readers of that report. Reading metadata requires the report's view+read permissions. Each table has its own permanent Laravel cache, invalidated after an import adds records to that table and rebuilt on the next request. Duplicate-only or rejected imports leave it unchanged. Deviations: event text, level, aircraft type, parameter, pilot position, flight unit. Green zone: aircraft type, pilot position, flight unit. RRJ-Express: event text, pilot position, flight unit. The existing frontend renders these options as searchable dropdowns and refreshes metadata after importing; no frontend rebuild or database migration is needed for this cache change. All filtering, ordering, grouping and pagination (maximum 500) run on the server.
+- `GET /api/{airfase|green-zone|rrj-express}/metadata` supplies column definitions, numeric fields and distinct dropdown options shared by all readers of that report. Reading metadata requires the report's view+read permissions. Each table has its own permanent Laravel cache, invalidated after an import adds records to that table and rebuilt on the next request. Duplicate-only or rejected imports leave it unchanged. AirFase: event text, level, aircraft type, parameter, pilot position, flight unit. Green zone: aircraft type, pilot position, flight unit. RRJ-Express: event text, pilot position, flight unit. The existing frontend renders these options as searchable dropdowns and refreshes metadata after importing; no frontend rebuild or database migration is needed for this cache change. All filtering, ordering, grouping and pagination (maximum 500) run on the server.
 - `POST /api/change-history/{id}/acknowledge` requires `history.view`, checks ownership/current status and queues the same operation as Telegram. `GET /api/change-history/pending-count` counts only pending current-period/future changes. Past UTC months and snapshots where the portal no longer requires acknowledgement become superseded. Web status refreshes every 15 seconds; sidebar count every 60 seconds and on tab focus.
 - The roster identity migration allows A → B → A to create a new event without re-enabling old buttons. Hashes now include addition/deletion type; existing pending snapshots may be superseded once at the first refresh after upgrade. Downgrading the identity migration is refused if repeated historical versions exist, rather than deleting history.
 - `pilot`, `unit-head`, `senior-leader` are protected positions with no additional functional permissions; they now determine report row scope (see below). Telegram only approves registrations; no position is assigned automatically. Managers can approve and separately set positions in the cabinet, but cannot assign access roles. Old Telegram classification buttons no longer modify users. Position and unit are not returned in the user's own `/account` response.
@@ -736,4 +751,4 @@ All three report APIs scope rows on the backend, before user filters, grouping, 
 
 Import permissions remain independent: importing writes to the shared report tables and does not grant visibility to all imported rows. The flight-unit directory for authorized user managers remains global so they can assign units. Indexes on personnel number, captain code and flight unit avoid scanning all report rows for common access checks.
 
-Checks: `php vendor/bin/phpunit --filter='PortalProfileTest|ReportVisibilityTest|DeviationApiTest|AirfaseReportsTest'`.
+Checks: `php vendor/bin/phpunit --filter='PortalProfileTest|ReportVisibilityTest|AirFaseApiTest|AirfaseReportsTest'`.

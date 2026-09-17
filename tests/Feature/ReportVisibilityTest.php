@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\{Deviation, GreenZone, RrjExpress, PortalProfile, Role, User};
+use App\Models\{AirFase, GreenZone, RrjExpress, PortalProfile, Role, User};
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -21,11 +21,11 @@ class ReportVisibilityTest extends TestCase
     {
         $user = User::create(['status' => 'active']);
         $this->grantSubscription($user);
-        $permissions = collect(['deviations', 'green-zone', 'rrj-express'])
+        $permissions = collect(['airfase', 'green-zone', 'rrj-express'])
             ->flatMap(fn ($report) => ["$report.view", "$report.read", "$report.import"])->all();
         $this->grantPermissions($user, $permissions);
         PortalProfile::create(['user_id' => $user->id, 'source' => 'rossiya_edu', 'full_name' => 'Семёнов Иван Иванович', 'personnel_number' => '123456', 'synced_at' => now()]);
-        foreach (['deviations' => Deviation::class, 'green-zone' => GreenZone::class, 'rrj-express' => RrjExpress::class] as $report => $model) {
+        foreach (['airfase' => AirFase::class, 'green-zone' => GreenZone::class, 'rrj-express' => RrjExpress::class] as $report => $model) {
             $base = array_intersect_key([
                 'event_number' => '1', 'event_text' => 'Visible', 'level' => 'Low', 'parameter' => 'Own parameter',
                 'flight_date' => '2026-09-15', 'aircraft_type' => 'SU95', 'aircraft_registration' => '89124',
@@ -59,7 +59,7 @@ class ReportVisibilityTest extends TestCase
             $this->assertSame($model::OPTIONS, array_keys($metadata->json('options')));
             $metadata->assertJsonPath('options.flight_unit', ['Отряд Север', 'Отряд Юг']);
             if (in_array('event_text', $model::OPTIONS, true)) $metadata->assertJsonPath('options.event_text', ['Hidden', 'Visible']);
-            if ($model === Deviation::class) $metadata->assertJsonPath('options.level', ['High', 'Low'])
+            if ($model === AirFase::class) $metadata->assertJsonPath('options.level', ['High', 'Low'])
                 ->assertJsonPath('options.parameter', ['Hidden parameter', 'Own parameter']);
 
             $this->setJob($user, 'unit-head', 'Отряд Юг');
@@ -75,11 +75,11 @@ class ReportVisibilityTest extends TestCase
         $this->grantSubscription($noProfile);
         $this->grantPermissions($noProfile, $permissions);
         $this->setJob($noProfile, 'pilot');
-        $this->actingAs($noProfile)->getJson('/api/deviations')->assertOk()->assertJsonPath('total', 0);
-        $this->getJson('/api/deviations/metadata')->assertJsonPath('options.event_text', ['Hidden', 'Visible']);
+        $this->actingAs($noProfile)->getJson('/api/airfase')->assertOk()->assertJsonPath('total', 0);
+        $this->getJson('/api/airfase/metadata')->assertJsonPath('options.event_text', ['Hidden', 'Visible']);
         $this->grantPermissions($noProfile, []);
         $this->setJob($noProfile, 'senior-leader');
-        $this->getJson('/api/deviations')->assertForbidden();
+        $this->getJson('/api/airfase')->assertForbidden();
     }
 
     private function setJob(User $user, ?string $key, ?string $unit = null): void

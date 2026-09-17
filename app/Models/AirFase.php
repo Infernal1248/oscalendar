@@ -5,8 +5,10 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Builder;
 
-class Deviation extends Model
+class AirFase extends Model
 {
+    protected $table = 'airfase';
+
     public const REQUIRED = ['event_number', 'event_text', 'level', 'flight_date', 'aircraft_type', 'aircraft_registration', 'flight_number'];
     public const DECIMALS = [];
     public const OPTIONS = ['event_text', 'level', 'aircraft_type', 'parameter', 'pilot_position', 'flight_unit'];

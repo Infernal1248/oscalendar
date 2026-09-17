@@ -2,9 +2,9 @@
 
 namespace Tests\Feature;
 
-use App\Models\Deviation;
+use App\Models\AirFase;
 use App\Models\User;
-use App\Services\DeviationImporter;
+use App\Services\AirFaseImporter;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -15,7 +15,7 @@ use PhpOffice\PhpSpreadsheet\Writer\Xls;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
 
-class DeviationApiTest extends TestCase
+class AirFaseApiTest extends TestCase
 {
     private array $temporaryFiles = [];
 
@@ -39,64 +39,64 @@ class DeviationApiTest extends TestCase
 
     public function test_permissions_are_opt_in_independent_and_only_admin_can_assign_them(): void
     {
-        $this->getJson('/api/deviations')->assertUnauthorized();
+        $this->getJson('/api/airfase')->assertUnauthorized();
         $user = User::create(['display_name' => 'Reader', 'status' => 'active']);
         $this->grantSubscription($user);
         $this->actingAs($user)->getJson('/api/account')
             ->assertJsonMissingPath('permissions')->assertJsonMissingPath('role')
-            ->assertJsonPath('deviations_access.read', false)->assertJsonPath('deviations_access.import', false);
-        $this->getJson('/api/deviations')->assertForbidden();
-        $this->postJson('/api/deviations/import')->assertForbidden();
+            ->assertJsonPath('airfase_access.read', false)->assertJsonPath('airfase_access.import', false);
+        $this->getJson('/api/airfase')->assertForbidden();
+        $this->postJson('/api/airfase/import')->assertForbidden();
 
-        $this->grantPermissions($user, ['deviations.view']);
-        $this->getJson('/api/account')->assertJsonFragment(['navigation' => ['profile', 'deviations']]);
-        $this->getJson('/api/deviations')->assertForbidden();
-        $this->postJson('/api/deviations/import')->assertForbidden();
-        $this->grantPermissions($user, ['deviations.view', 'deviations.read']);
-        $this->getJson('/api/deviations')->assertOk();
-        $this->postJson('/api/deviations/import')->assertForbidden();
-        $this->grantPermissions($user, ['deviations.view', 'deviations.import']);
-        $this->postJson('/api/deviations/import')->assertUnprocessable()->assertJsonValidationErrors('file');
-        $this->getJson('/api/deviations')->assertForbidden();
-        $this->grantPermissions($user, ['deviations.read', 'deviations.import']);
-        $this->getJson('/api/deviations')->assertForbidden();
-        $this->postJson('/api/deviations/import')->assertForbidden();
-        $this->patchJson("/api/admin/users/{$user->id}", ['status' => 'active', 'permissions' => ['deviations.view']])->assertForbidden();
+        $this->grantPermissions($user, ['airfase.view']);
+        $this->getJson('/api/account')->assertJsonFragment(['navigation' => ['profile', 'airfase']]);
+        $this->getJson('/api/airfase')->assertForbidden();
+        $this->postJson('/api/airfase/import')->assertForbidden();
+        $this->grantPermissions($user, ['airfase.view', 'airfase.read']);
+        $this->getJson('/api/airfase')->assertOk();
+        $this->postJson('/api/airfase/import')->assertForbidden();
+        $this->grantPermissions($user, ['airfase.view', 'airfase.import']);
+        $this->postJson('/api/airfase/import')->assertUnprocessable()->assertJsonValidationErrors('file');
+        $this->getJson('/api/airfase')->assertForbidden();
+        $this->grantPermissions($user, ['airfase.read', 'airfase.import']);
+        $this->getJson('/api/airfase')->assertForbidden();
+        $this->postJson('/api/airfase/import')->assertForbidden();
+        $this->patchJson("/api/admin/users/{$user->id}", ['status' => 'active', 'permissions' => ['airfase.view']])->assertForbidden();
 
         $admin = User::create(['role' => 'admin', 'status' => 'active']);
         $this->actingAs($admin)->getJson('/api/account')
             ->assertJsonPath('users_access.assign_roles', true)
-            ->assertJsonPath('deviations_access.read', true)->assertJsonPath('deviations_access.import', true);
-        $this->getJson('/api/admin/permissions')->assertJsonFragment(['key' => 'deviations.import', 'assignable' => true]);
+            ->assertJsonPath('airfase_access.read', true)->assertJsonPath('airfase_access.import', true);
+        $this->getJson('/api/admin/permissions')->assertJsonFragment(['key' => 'airfase.import', 'assignable' => true]);
         $this->patchJson("/api/admin/users/{$user->id}", [
-            'status' => 'active', 'role_ids' => [\App\Models\Role::where('key', 'deviations-importer')->sole()->id],
+            'status' => 'active', 'role_ids' => [\App\Models\Role::where('key', 'airfase-importer')->sole()->id],
         ])->assertOk();
-        $this->actingAs($user->fresh())->getJson('/api/deviations')->assertOk();
+        $this->actingAs($user->fresh())->getJson('/api/airfase')->assertOk();
         $user->update(['status' => 'blocked']);
-        $this->actingAs($user)->getJson('/api/deviations')->assertForbidden();
+        $this->actingAs($user)->getJson('/api/airfase')->assertForbidden();
     }
 
     public function test_grouped_xls_imports_shared_records_and_skips_overlapping_exports(): void
     {
         $admin = User::create(['role' => 'admin', 'status' => 'active']);
-        $this->assertSame([], \App\Services\ReportFilterOptions::values(Deviation::class)['event_text']);
-        $this->actingAs($admin)->postJson('/api/deviations/import', ['file' => $this->file([
+        $this->assertSame([], \App\Services\ReportFilterOptions::values(AirFase::class)['event_text']);
+        $this->actingAs($admin)->postJson('/api/airfase/import', ['file' => $this->file([
             $this->group(1004, 2), $this->detail(), $this->detail('2025-12-06'),
         ])])->assertOk()->assertExactJson(['processed' => 2, 'inserted' => 2, 'duplicates' => 0]);
-        $this->assertDatabaseHas('deviations', ['event_number' => '1004', 'flight_date' => '2025-12-05', 'parameter_value' => '7.75', 'report_event_count' => 2]);
+        $this->assertDatabaseHas('airfase', ['event_number' => '1004', 'flight_date' => '2025-12-05', 'parameter_value' => '7.75', 'report_event_count' => 2]);
 
-        $this->postJson('/api/deviations/import', ['file' => $this->file([
+        $this->postJson('/api/airfase/import', ['file' => $this->file([
             $this->group(1004, 99), $this->detail('2025-12-05', '7.750'), $this->detail('2025-12-07'),
         ], 'xlsx')])->assertOk()->assertExactJson(['processed' => 2, 'inserted' => 1, 'duplicates' => 1]);
-        $this->assertDatabaseCount('deviations', 3);
+        $this->assertDatabaseCount('airfase', 3);
 
-        $reader = User::create(['permissions' => ['deviations.view', 'deviations.read'], 'status' => 'active']);
+        $reader = User::create(['permissions' => ['airfase.view', 'airfase.read'], 'status' => 'active']);
         $this->grantSubscription($reader);
-        $this->grantPermissions($reader, ['deviations.view', 'deviations.read']);
+        $this->grantPermissions($reader, ['airfase.view', 'airfase.read']);
         $reader->roles()->attach(\App\Models\Role::where('key', 'senior-leader')->sole()->id);
-        $this->actingAs($reader)->getJson('/api/deviations')->assertOk()->assertJsonPath('total', 3)
+        $this->actingAs($reader)->getJson('/api/airfase')->assertOk()->assertJsonPath('total', 3)
             ->assertJsonMissingPath('data.0.fingerprint')->assertJsonMissingPath('data.0.uploaded_by');
-        $this->getJson('/api/deviations/metadata')->assertOk()->assertJsonPath('options.level', ['Medium'])
+        $this->getJson('/api/airfase/metadata')->assertOk()->assertJsonPath('options.level', ['Medium'])
             ->assertJsonPath('options.parameter', ['SPEED LIMIT'])->assertJsonPath('options.event_text', ['Test event 1004']);
     }
 
@@ -105,59 +105,59 @@ class DeviationApiTest extends TestCase
         $this->actingAs(User::create(['role' => 'admin', 'status' => 'active']));
         $invalid = $this->detail();
         $invalid[4] = 'not a date';
-        $this->postJson('/api/deviations/import', ['file' => $this->file([
+        $this->postJson('/api/airfase/import', ['file' => $this->file([
             $this->group(), $this->detail(), $invalid,
         ])])->assertUnprocessable()->assertJsonValidationErrors('file');
         $formula = $this->detail();
         $formula[9] = '=1+2';
-        $this->postJson('/api/deviations/import', ['file' => $this->file([
+        $this->postJson('/api/airfase/import', ['file' => $this->file([
             $this->group(), $formula,
         ])])->assertUnprocessable()->assertJsonValidationErrors('file');
-        $this->postJson('/api/deviations/import', ['file' => UploadedFile::fake()->createWithContent('bad.xls', '<html>not Excel</html>')])
+        $this->postJson('/api/airfase/import', ['file' => UploadedFile::fake()->createWithContent('bad.xls', '<html>not Excel</html>')])
             ->assertUnprocessable()->assertJsonValidationErrors('file');
-        $this->postJson('/api/deviations/import', ['file' => UploadedFile::fake()->create('large.xls', 10241)])
+        $this->postJson('/api/airfase/import', ['file' => UploadedFile::fake()->create('large.xls', 10241)])
             ->assertUnprocessable()->assertJsonValidationErrors('file');
-        $this->postJson('/api/deviations/import', ['file' => $this->file([$this->group()])])->assertUnprocessable();
-        $this->assertDatabaseCount('deviations', 0);
+        $this->postJson('/api/airfase/import', ['file' => $this->file([$this->group()])])->assertUnprocessable();
+        $this->assertDatabaseCount('airfase', 0);
     }
 
     public function test_server_filters_sorting_grouping_and_pagination_are_validated(): void
     {
         $this->actingAs(User::create(['role' => 'admin', 'status' => 'active']));
-        $this->postJson('/api/deviations/import', ['file' => $this->file([
+        $this->postJson('/api/airfase/import', ['file' => $this->file([
             $this->group(1004), $this->detail('2025-12-05'), $this->detail('2025-12-07'),
             $this->group(1023), $this->detail('2025-12-06'),
         ])])->assertOk();
-        $this->getJson('/api/deviations?'.http_build_query([
+        $this->getJson('/api/airfase?'.http_build_query([
             'filters' => ['event_number' => '1004', 'captain_name' => 'Test'],
             'date_from' => '2025-12-06', 'date_to' => '2025-12-09',
         ]))->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.flight_date', '2025-12-07');
-        $this->getJson('/api/deviations?date_to=2025-12-05')->assertOk()->assertJsonPath('total', 1);
-        $this->getJson('/api/deviations?group_by=event_number&sort_by=flight_date&sort_order=asc&per_page=2')
+        $this->getJson('/api/airfase?date_to=2025-12-05')->assertOk()->assertJsonPath('total', 1);
+        $this->getJson('/api/airfase?group_by=event_number&sort_by=flight_date&sort_order=asc&per_page=2')
             ->assertOk()->assertJsonPath('total', 3)->assertJsonCount(2, 'data')
             ->assertJsonPath('data.0.flight_date', '2025-12-05')->assertJsonPath('data.1.flight_date', '2025-12-07');
-        $this->getJson('/api/deviations?group_by=event_number&sort_by=flight_date&sort_order=asc&per_page=2&page=2')
+        $this->getJson('/api/airfase?group_by=event_number&sort_by=flight_date&sort_order=asc&per_page=2&page=2')
             ->assertOk()->assertJsonPath('data.0.event_number', '1023');
-        $this->getJson('/api/deviations?'.http_build_query(['filters' => ['captain_name' => '%']]))->assertOk()->assertJsonPath('total', 0);
+        $this->getJson('/api/airfase?'.http_build_query(['filters' => ['captain_name' => '%']]))->assertOk()->assertJsonPath('total', 0);
         foreach (['per_page=501', 'per_page=0', 'page=0', 'sort_by=uploaded_by', 'sort_order=invalid', 'group_by=invalid',
             'filters[unknown]=x', 'date_from=2025-12-09&date_to=2025-12-01'] as $query) {
-            $this->getJson('/api/deviations?'.$query)->assertUnprocessable();
+            $this->getJson('/api/airfase?'.$query)->assertUnprocessable();
         }
     }
 
     public function test_column_rules_are_combined_and_validated_on_the_server(): void
     {
-        $reader = $this->grantPermissions(User::create(['status' => 'active']), ['deviations.view', 'deviations.read', 'deviations.import']);
+        $reader = $this->grantPermissions(User::create(['status' => 'active']), ['airfase.view', 'airfase.read', 'airfase.import']);
         $this->grantSubscription($reader);
         $reader->roles()->attach(\App\Models\Role::where('key', 'senior-leader')->sole()->id);
         $this->actingAs($reader);
-        $this->postJson('/api/deviations/import', ['file' => $this->file([
+        $this->postJson('/api/airfase/import', ['file' => $this->file([
             $this->group(1004, 2), $this->detail('2025-12-05'), $this->detail('2025-12-07'),
             $this->group(1023, 1), $this->detail('2025-12-06'),
         ])])->assertOk();
         $rule = fn ($mode, $value) => ['matchMode' => $mode, 'value' => $value];
         $filter = fn ($constraints, $operator = 'and') => compact('operator', 'constraints');
-        $request = fn ($rules) => $this->getJson('/api/deviations?'.http_build_query(['filter_rules' => $rules, 'per_page' => 1]));
+        $request = fn ($rules) => $this->getJson('/api/airfase?'.http_build_query(['filter_rules' => $rules, 'per_page' => 1]));
 
         $request([
             'event_number' => $filter([$rule('equals', '1004'), $rule('equals', '1023')], 'or'),
@@ -196,14 +196,14 @@ class DeviationApiTest extends TestCase
         }
         $admin = User::create(['role' => 'admin', 'status' => 'active']);
         $file = new UploadedFile($path, basename($path), null, null, true);
-        $importer = app(DeviationImporter::class);
+        $importer = app(AirFaseImporter::class);
         $first = $importer->import($file, $admin->id);
         $second = $importer->import($file, $admin->id);
         $this->assertGreaterThan(500, $first['inserted']);
         $this->assertSame(0, $second['inserted']);
         $this->assertSame($second['processed'], $second['duplicates']);
-        $this->actingAs($admin)->getJson('/api/deviations?per_page=500')->assertOk()->assertJsonCount(500, 'data');
-        $this->getJson('/api/deviations?per_page=500&page=2')->assertOk()->assertJsonPath('total', $first['inserted']);
+        $this->actingAs($admin)->getJson('/api/airfase?per_page=500')->assertOk()->assertJsonCount(500, 'data');
+        $this->getJson('/api/airfase?per_page=500&page=2')->assertOk()->assertJsonPath('total', $first['inserted']);
     }
 
     private function group(int $number = 1004, int $count = 1): array
@@ -221,13 +221,13 @@ class DeviationApiTest extends TestCase
     {
         $book = new Spreadsheet();
         $sheet = $book->getActiveSheet();
-        $sheet->fromArray([array_values(Deviation::COLUMNS), ...$rows]);
+        $sheet->fromArray([array_values(AirFase::COLUMNS), ...$rows]);
         foreach ($rows as $index => $row) {
             if (isset($row[9]) && str_starts_with((string) $row[9], '=')) {
                 $sheet->setCellValueExplicit('J'.($index + 2), $row[9], DataType::TYPE_FORMULA);
             }
         }
-        $path = tempnam(sys_get_temp_dir(), 'deviation-test-');
+        $path = tempnam(sys_get_temp_dir(), 'airfase-test-');
         $this->temporaryFiles[] = $path;
         $writer = $extension === 'xls' ? new Xls($book) : new Xlsx($book);
         $writer->setPreCalculateFormulas(false)->save($path);

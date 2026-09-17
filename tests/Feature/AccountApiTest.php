@@ -81,10 +81,10 @@ class AccountApiTest extends TestCase
     {
         $developer = User::create([
             'display_name' => 'Владимир', 'timezone' => 'Asia/Krasnoyarsk',
-            'permissions' => ['profile.view', 'deviations.view', 'deviations.read'],
+            'permissions' => ['profile.view', 'airfase.view', 'airfase.read'],
         ]);
         $owner = User::create(['display_name' => 'Ромарио', 'permissions' => ['profile.view']]);
-        $this->grantPermissions($developer, ['profile.view', 'deviations.view', 'deviations.read']);
+        $this->grantPermissions($developer, ['profile.view', 'airfase.view', 'airfase.read']);
         $this->grantPermissions($owner, ['profile.view']);
         foreach ([$developer, $owner] as $user) {
             $user->portalCredentials()->create([
@@ -122,7 +122,7 @@ class AccountApiTest extends TestCase
             ->assertOk()->assertJsonPath('user.id', $owner->id);
         $this->postJson('/api/auth/login', ['login' => 'oscalendar-vladimir', 'password' => 'local-test-password'])
             ->assertOk()->assertJsonPath('user.id', $developer->id)
-            ->assertJsonPath('user.navigation', ['profile', 'deviations'])
+            ->assertJsonPath('user.navigation', ['profile', 'airfase'])
             ->assertJsonMissingPath('user.role')->assertJsonMissingPath('user.permissions');
         $this->postJson('/api/auth/login', ['login' => 'oscalendar-vladimir', 'password' => 'portal-password'])->assertUnprocessable();
         $this->postJson('/api/auth/login', ['login' => 'shared-portal', 'password' => 'local-test-password'])->assertUnprocessable();

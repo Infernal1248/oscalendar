@@ -3,7 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Role;
-use App\Models\Deviation;
+use App\Models\AirFase;
 use App\Models\GreenZone;
 use App\Models\RrjExpress;
 use App\Services\FlightUnitDirectory;
@@ -21,7 +21,7 @@ class PilotRolesTest extends TestCase
         config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:']);
         DB::purge('sqlite');
         Artisan::call('migrate', ['--force' => true]);
-        foreach ([Deviation::class, GreenZone::class, RrjExpress::class] as $model) {
+        foreach ([AirFase::class, GreenZone::class, RrjExpress::class] as $model) {
             ReportFilterOptions::invalidate($model);
         }
     }
@@ -37,27 +37,27 @@ class PilotRolesTest extends TestCase
     {
         $manager = $this->grantPermissions(User::create(['status' => 'active']), ['users.view', 'users.manage']);
         $this->actingAs($manager)->getJson('/api/admin/flight-units')->assertOk()->assertExactJson([]);
-        foreach ([Deviation::class, GreenZone::class, RrjExpress::class] as $model) {
+        foreach ([AirFase::class, GreenZone::class, RrjExpress::class] as $model) {
             ReportFilterOptions::invalidate($model);
         }
-        $this->reportUnit(Deviation::class, ' Петербург ');
+        $this->reportUnit(AirFase::class, ' Петербург ');
         $this->reportUnit(GreenZone::class, 'Петербург');
         $this->reportUnit(RrjExpress::class, 'Москва');
-        $this->reportUnit(Deviation::class, '');
+        $this->reportUnit(AirFase::class, '');
         $this->reportUnit(GreenZone::class, null);
         DB::enableQueryLog();
         $this->assertSame(['Москва', 'Петербург'], FlightUnitDirectory::values());
-        $this->assertCount(count(Deviation::OPTIONS) + count(GreenZone::OPTIONS) + count(RrjExpress::OPTIONS), DB::getQueryLog());
+        $this->assertCount(count(AirFase::OPTIONS) + count(GreenZone::OPTIONS) + count(RrjExpress::OPTIONS), DB::getQueryLog());
         DB::flushQueryLog();
         $this->assertSame(['Москва', 'Петербург'], FlightUnitDirectory::values());
         $this->assertSame([], DB::getQueryLog());
         DB::disableQueryLog();
-        $this->reportUnit(Deviation::class, 'Красноярск');
+        $this->reportUnit(AirFase::class, 'Красноярск');
         $this->assertNotContains('Красноярск', FlightUnitDirectory::values());
         $this->travel(30)->days();
         try {
             $this->assertNotContains('Красноярск', FlightUnitDirectory::values());
-            ReportFilterOptions::invalidate(Deviation::class);
+            ReportFilterOptions::invalidate(AirFase::class);
             $this->assertContains('Красноярск', FlightUnitDirectory::values());
         } finally {
             $this->travelBack();
@@ -73,7 +73,7 @@ class PilotRolesTest extends TestCase
         $target = User::create(['status' => 'pending']);
         $path = '/api/admin/users/'.$target->id;
         $unit = 'Лётный отряд Санкт-Петербург — командный состав';
-        $this->reportUnit(Deviation::class, $unit);
+        $this->reportUnit(AirFase::class, $unit);
         $this->actingAs($manager)->getJson('/api/admin/pilot-roles')->assertOk()->assertJsonCount(3);
         $this->patchJson($path, ['status' => 'active'])->assertOk();
         $this->assertNull($target->fresh()->pilotRole());
@@ -98,8 +98,8 @@ class PilotRolesTest extends TestCase
         $this->actingAs($admin)->getJson('/api/admin/roles')->assertOk()->assertJsonFragment(['is_pilot_role' => true, 'editable' => false]);
         $this->patchJson('/api/admin/roles/'.$role->id, ['name' => 'Senior', 'permissions' => ['users.manage']])->assertUnprocessable();
         $this->deleteJson('/api/admin/roles/'.$role->id)->assertUnprocessable();
-        $this->patchJson($path, ['role_ids' => [Role::where('key', 'deviations-reader')->sole()->id]])->assertOk();
+        $this->patchJson($path, ['role_ids' => [Role::where('key', 'airfase-reader')->sole()->id]])->assertOk();
         $this->assertSame('senior-leader', $target->fresh()->pilotRole());
-        $this->assertTrue($target->fresh()->hasPermission('deviations.read'));
+        $this->assertTrue($target->fresh()->hasPermission('airfase.read'));
     }
 }

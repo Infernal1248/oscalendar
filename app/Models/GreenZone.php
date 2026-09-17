@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-class GreenZone extends Deviation
+class GreenZone extends AirFase
 {
     protected $table = 'green_zone_flights';
     protected $casts = [];

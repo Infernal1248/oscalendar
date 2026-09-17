@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-class RrjExpress extends Deviation
+class RrjExpress extends AirFase
 {
     protected $table = 'rrj_express_events';
 

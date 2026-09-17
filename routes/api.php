@@ -3,7 +3,7 @@
 use App\Http\Controllers\CalendarFeedController;
 use App\Http\Controllers\AccountController;
 use App\Http\Controllers\AdminUserController;
-use App\Http\Controllers\DeviationController;
+use App\Http\Controllers\AirFaseController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\Internal\ParserJobController;
 use App\Http\Controllers\Internal\PartialSyncResultController;
@@ -38,10 +38,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/change-history', [AccountController::class, 'changeHistory']);
     Route::get('/change-history/pending-count', [AccountController::class, 'pendingChanges']);
     Route::post('/change-history/{event}/acknowledge', [AccountController::class, 'acknowledgeChange'])->whereNumber('event');
-    foreach (['deviations', 'green-zone', 'rrj-express'] as $report) {
-        Route::get('/'.$report, [DeviationController::class, 'index'])->defaults('report', $report);
-        Route::get('/'.$report.'/metadata', [DeviationController::class, 'metadata'])->defaults('report', $report);
-        Route::post('/'.$report.'/import', [DeviationController::class, 'import'])->defaults('report', $report)->middleware('throttle:10,1');
+    foreach (['airfase', 'green-zone', 'rrj-express'] as $report) {
+        Route::get('/'.$report, [AirFaseController::class, 'index'])->defaults('report', $report);
+        Route::get('/'.$report.'/metadata', [AirFaseController::class, 'metadata'])->defaults('report', $report);
+        Route::post('/'.$report.'/import', [AirFaseController::class, 'import'])->defaults('report', $report)->middleware('throttle:10,1');
     }
     Route::get('/workplan/flights/{flightSegment}', [AccountController::class, 'flight']);
     Route::get('/admin/users', [AdminUserController::class, 'index']);

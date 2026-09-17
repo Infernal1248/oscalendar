@@ -18,17 +18,19 @@ class FrontendRoutesTest extends TestCase
             $this->get('/')->assertStatus(503);
             file_put_contents($directory.'/index.html', '<!doctype html><html><body>Frontend fixture</body></html>');
 
-            foreach (['/', '/login', '/dashboard', '/profile', '/workplan', '/history', '/deviations', '/green-zone', '/rrj-express', '/admin/users', '/admin/permissions'] as $page) {
+            foreach (['/', '/login', '/dashboard', '/profile', '/workplan', '/history', '/airfase', '/green-zone', '/rrj-express', '/admin/users', '/admin/permissions'] as $page) {
                 $response = $this->get($page)->assertOk()->assertHeader('Content-Type', 'text/html; charset=UTF-8');
                 $this->assertSame($directory.'/index.html', $response->baseResponse->getFile()->getPathname());
                 $this->assertTrue($response->headers->hasCacheControlDirective('no-cache'));
             }
 
             $this->getJson('/api/account')->assertUnauthorized();
+            $this->get('/deviations')->assertStatus(301)->assertRedirect('/airfase');
+            $this->getJson('/api/deviations')->assertNotFound();
             $this->getJson('/api/not-a-route')->assertNotFound();
             $this->get('/assets/missing.js')->assertNotFound();
             $this->get('/not-a-page')->assertNotFound();
-            $this->post('/deviations')->assertStatus(405);
+            $this->post('/airfase')->assertStatus(405);
 
             $calendar = app('router')->getRoutes()->match(Request::create('/api/calendar/test-token.ics'));
             $this->assertSame(CalendarFeedController::class.'@show', $calendar->getActionName());

@@ -2,23 +2,23 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Deviation;
+use App\Models\AirFase;
 use App\Models\GreenZone;
 use App\Models\RrjExpress;
-use App\Services\DeviationImporter;
+use App\Services\AirFaseImporter;
 use App\Services\ReportFilterOptions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
-class DeviationController extends Controller
+class AirFaseController extends Controller
 {
     private function model(Request $request): string
     {
-        return match ($request->route('report', 'deviations')) {
+        return match ($request->route('report', 'airfase')) {
             'green-zone' => GreenZone::class,
             'rrj-express' => RrjExpress::class,
-            'deviations' => Deviation::class,
+            'airfase' => AirFase::class,
             default => abort(404),
         };
     }
@@ -119,7 +119,7 @@ class DeviationController extends Controller
         return response()->json($page);
     }
 
-    public function import(Request $request, DeviationImporter $importer): JsonResponse
+    public function import(Request $request, AirFaseImporter $importer): JsonResponse
     {
         $this->permit($request, 'import');
         $request->validate(['file' => ['required', 'file', 'extensions:xls,xlsx', 'max:10240']]);
@@ -129,7 +129,7 @@ class DeviationController extends Controller
 
     private function permit(Request $request, string $permission): void
     {
-        $report = $request->route('report', 'deviations');
+        $report = $request->route('report', 'airfase');
         abort_unless($request->user()->status === 'active'
             && $request->user()->hasPermission("$report.view")
             && $request->user()->hasPermission("$report.$permission"), 403);
