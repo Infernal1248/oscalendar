@@ -55,6 +55,23 @@ class RoleAccessTest extends TestCase
         $this->postJson('/api/admin/roles', ['name' => $basic->name, 'permissions' => []])->assertUnprocessable();
     }
 
+    public function test_user_filter_catalog_is_complete_and_read_only_for_viewers(): void
+    {
+        $viewer = User::create([]);
+        $this->actingAs($viewer)->getJson('/api/admin/users/filters')->assertForbidden();
+        $viewer->roles()->sync([Role::where('key', 'users-reader')->sole()->id]);
+        $unused = Role::create(['key' => 'unused-filter-role', 'name' => 'Не назначенная роль', 'permissions' => []]);
+        $response = $this->actingAs($viewer->fresh())->getJson('/api/admin/users/filters')->assertOk();
+        $response->assertJsonFragment(['id' => $unused->id, 'name' => $unused->name]);
+        $response->assertJsonCount(count(Role::PILOT_ROLES), 'pilot_roles');
+        $this->assertCount(Role::whereNotIn('key', array_keys(Role::PILOT_ROLES))->count(), $response->json('roles'));
+        foreach ($response->json('roles') as $role) {
+            $this->assertSame(['id', 'name'], array_keys($role));
+        }
+        $this->getJson('/api/admin/roles')->assertForbidden();
+        $this->patchJson('/api/admin/users/'.$viewer->id, ['role_ids' => [$unused->id]])->assertForbidden();
+    }
+
     public function test_user_viewers_and_managers_cannot_assign_roles_or_manage_admins(): void
     {
         $admin = User::create(['role' => 'admin']);

@@ -12,6 +12,16 @@ use Illuminate\Validation\Rule;
 
 class AdminUserController extends Controller
 {
+    public function filters(Request $request): JsonResponse
+    {
+        abort_unless($request->user()->hasPermission('users.view'), 403);
+
+        return response()->json([
+            'roles' => Role::whereNotIn('key', array_keys(Role::PILOT_ROLES))->orderBy('name')->get(['id', 'name']),
+            'pilot_roles' => collect(Role::PILOT_ROLES)->map(fn ($name, $key) => compact('key', 'name'))->values(),
+        ]);
+    }
+
     public function pilotRoles(Request $request): JsonResponse
     {
         abort_unless($request->user()->hasPermission('users.view') && $request->user()->hasPermission('users.manage'), 403);

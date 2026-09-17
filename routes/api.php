@@ -45,6 +45,7 @@ Route::middleware('auth:sanctum')->group(function () {
     }
     Route::get('/workplan/flights/{flightSegment}', [AccountController::class, 'flight']);
     Route::get('/admin/users', [AdminUserController::class, 'index']);
+    Route::get('/admin/users/filters', [AdminUserController::class, 'filters']);
     Route::get('/admin/pilot-roles', [AdminUserController::class, 'pilotRoles']);
     Route::get('/admin/flight-units', [AdminUserController::class, 'flightUnits']);
     Route::patch('/admin/users/{user}', [AdminUserController::class, 'update']);
