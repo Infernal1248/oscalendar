@@ -290,6 +290,115 @@ class PartialSyncResultTest extends TestCase
         $this->assertSame('2026-10-08 00:00:00', $item->ends_at->format('Y-m-d H:i:s'));
     }
 
+    public function test_monthly_snapshot_removes_replaced_non_flight_events_from_workplan_and_calendar(): void
+    {
+        \Illuminate\Support\Carbon::setTestNow('2026-09-17 12:00:00');
+        try {
+            $user = User::create(['display_name' => 'Replacement test']);
+            $this->grantSubscription($user);
+            $dot = ['source_external_id' => null, 'kind' => 'other', 'title' => 'Мероприятие',
+                'flight_numbers_raw' => 'ДОТ (КРС)', 'starts_at' => '2026-09-17T08:30:00Z', 'ends_at' => '2026-09-17T17:30:00Z'];
+            $office = array_replace($dot, ['flight_numbers_raw' => 'ОФИС', 'starts_at' => '2026-09-17T05:30:00Z', 'ends_at' => '2026-09-17T14:30:00Z']);
+            $leave = ['source_external_id' => '', 'kind' => 'other', 'title' => 'Отпуск',
+                'flight_numbers_raw' => 'Плановый отпуск', 'starts_at' => '2026-10-01T00:00:00Z',
+                'ends_at' => '2026-10-15T00:00:00Z', 'source_payload' => ['all_day' => true]];
+            $this->monthlyRoster($user, '2026-09', [$dot]);
+            $oldDot = RosterItem::sole();
+            $this->monthlyRoster($user, '2026-10', [$leave]);
+            $oldLeave = RosterItem::where('flight_numbers_raw', 'Плановый отпуск')->sole();
+
+            $this->monthlyRoster($user, '2026-09', [$office]);
+            $this->monthlyRoster($user, '2026-10', [
+                array_replace($leave, ['starts_at' => '2026-10-05T00:00:00Z']),
+                array_replace($dot, ['starts_at' => '2026-10-01T08:30:00Z', 'ends_at' => '2026-10-01T17:30:00Z']),
+                array_replace($dot, ['flight_numbers_raw' => 'КПК ТБ', 'starts_at' => '2026-10-02T07:00:00Z', 'ends_at' => '2026-10-02T13:00:00Z']),
+            ]);
+            foreach ([$oldDot, $oldLeave] as $old) {
+                $this->assertFalse($old->fresh()->is_actual);
+                $this->assertTrue($old->fresh()->is_removed_from_source);
+            }
+            $this->assertSame(6, RosterItem::count(), 'Historical rows are retained.');
+            $workplan = $this->actingAs($user)->getJson('/api/workplan')->assertOk()->assertJsonCount(4)->json();
+            $this->assertNotContains($oldDot->id, array_column($workplan, 'id'));
+            $this->assertNotContains($oldLeave->id, array_column($workplan, 'id'));
+            $this->assertSame(1, count(array_filter($workplan, fn ($item) => $item['flight_numbers_raw'] === 'Плановый отпуск')));
+
+            $feed = \App\Models\CalendarFeed::create(['user_id' => $user->id, 'token' => 'non-flight-replacement']);
+            $ics = $this->get('/api/calendar/'.$feed->token.'.ics')->assertOk()->getContent();
+            $this->assertSame(4, substr_count($ics, 'BEGIN:VEVENT'));
+            $this->assertStringNotContainsString('UID:roster-item-'.$oldDot->id.'@oscalendar', $ics);
+            $this->assertStringNotContainsString('UID:roster-item-'.$oldLeave->id.'@oscalendar', $ics);
+            $this->assertStringContainsString('DTSTART;VALUE=DATE:20261005', $ics);
+            $this->assertStringContainsString('DTEND;VALUE=DATE:20261015', $ics);
+
+            // If an activity returns on the portal, reactivate its original row rather than duplicate it.
+            $this->monthlyRoster($user, '2026-09', [$dot, $office]);
+            $this->monthlyRoster($user, '2026-09', [$dot, $office]);
+            $this->assertTrue($oldDot->fresh()->is_actual);
+            $this->assertFalse($oldDot->fresh()->is_removed_from_source);
+            $this->assertSame(6, RosterItem::count());
+            $this->getJson('/api/workplan')->assertOk()->assertJsonCount(5);
+        } finally {
+            \Illuminate\Support\Carbon::setTestNow();
+        }
+    }
+
+    public function test_monthly_reconciliation_is_scoped_and_handles_empty_month_at_month_end(): void
+    {
+        \Illuminate\Support\Carbon::setTestNow('2026-10-31 12:00:00');
+        try {
+            $user = User::create([]);
+            $other = User::create([]);
+            $base = ['user_id' => $user->id, 'source' => 'rossiya_edu', 'kind' => 'other',
+                'starts_at' => '2026-09-17 05:30:00', 'is_actual' => true, 'is_removed_from_source' => false];
+            $missing = RosterItem::create($base);
+            $missingFlight = RosterItem::create(array_replace($base, ['kind' => 'flight_ring', 'source_external_id' => 'old-flight']));
+            $untouched = [
+                RosterItem::create(array_replace($base, ['user_id' => $other->id])),
+                RosterItem::create(array_replace($base, ['source' => 'another_source'])),
+                RosterItem::create(array_replace($base, ['starts_at' => '2026-08-31 23:59:59'])),
+                RosterItem::create(array_replace($base, ['starts_at' => '2026-10-01 00:00:00'])),
+            ];
+            $flight = ['kind' => 'flight_ring', 'source_external_id' => 'current-flight', 'starts_at' => '2026-09-18T12:00:00Z'];
+            $this->monthlyRoster($user, '2026-09', [$flight]);
+            $this->assertFalse($missing->fresh()->is_actual);
+            $this->assertFalse($missingFlight->fresh()->is_actual);
+            $current = RosterItem::where('source_external_id', 'current-flight')->sole();
+            $this->assertTrue($current->is_actual);
+            $this->monthlyRoster($user, '2026-09', []);
+            $this->assertFalse($current->fresh()->is_actual);
+            foreach ($untouched as $item) $this->assertTrue($item->fresh()->is_actual);
+        } finally {
+            \Illuminate\Support\Carbon::setTestNow();
+        }
+    }
+
+    public function test_invalid_or_non_monthly_chunks_do_not_remove_existing_activities(): void
+    {
+        $user = User::create([]);
+        $activity = ['kind' => 'other', 'title' => 'ОФИС', 'starts_at' => '2026-09-17T05:30:00Z'];
+        $this->monthlyRoster($user, '2026-09', [$activity]);
+        $item = RosterItem::sole();
+        $run = SyncRun::create(['user_id' => $user->id, 'source' => 'rossiya_edu', 'trigger' => 'scheduler', 'status' => 'running', 'started_at' => now()]);
+        $this->postChunk($run, $this->basePayload($run, ['roster_period' => '2026-09', 'roster_items' => [
+            array_replace($activity, ['starts_at' => '2026-09-18T05:30:00Z']),
+            ['kind' => 'other', 'starts_at' => null, 'source_payload' => ['raw_html' => '<tr>Invalid row</tr>']],
+        ]]))->assertUnprocessable();
+        $this->assertSame(1, RosterItem::count());
+        $this->assertTrue($item->fresh()->is_actual);
+        $this->postChunk($run, $this->basePayload($run, ['chunk_kind' => 'flight_segments', 'roster_period' => '2026-09']))->assertOk();
+        $this->postChunk($run, $this->basePayload($run, []))->assertOk();
+        $this->assertTrue($item->fresh()->is_actual);
+    }
+
+    private function monthlyRoster(User $user, string $period, array $items): void
+    {
+        $run = SyncRun::create(['user_id' => $user->id, 'source' => 'rossiya_edu', 'trigger' => 'scheduler', 'status' => 'running', 'started_at' => now()]);
+        $payload = $this->basePayload($run, ['roster_period' => $period, 'roster_items' => $items]);
+        $this->postChunk($run, $payload)->assertOk();
+        $this->postChunk($run, $payload)->assertOk(); // Retry the same chunk: no duplicate records or removals.
+    }
+
     private function postChunk(SyncRun $syncRun, array $payload)
     {
         return $this->withToken($this->token)

@@ -156,6 +156,7 @@ class SyncResultService
             'segments_updated' => 0,
         ];
         $rosterByExternalId = [];
+        $seenRosterItemIds = [];
         $markedItems = [];
 
         if (! empty($payload['portal_profile'])) {
@@ -182,6 +183,7 @@ class SyncResultService
                 'is_removed_from_source',
             ]);
             $item->save();
+            $seenRosterItemIds[] = $item->id;
             $this->taskScheduler->scheduleFlightDetails($item, $detailsChanged);
 
             $portalChange = $itemPayload['source_payload']['portal_change'] ?? [];
@@ -207,7 +209,7 @@ class SyncResultService
                 $userId,
                 $source,
                 $payload['roster_period'],
-                array_keys($rosterByExternalId)
+                $seenRosterItemIds
             );
         }
 
@@ -361,22 +363,22 @@ class SyncResultService
         return $changes;
     }
 
-    private function markMissingRosterItems(int $userId, string $source, string $period, array $seenExternalIds): int
+    private function markMissingRosterItems(int $userId, string $source, string $period, array $seenRosterItemIds): int
     {
-        $start = Carbon::createFromFormat('Y-m', $period, 'UTC')->startOfMonth();
+        $start = Carbon::createFromFormat('!Y-m', $period, 'UTC');
         $end = $start->copy()->addMonth();
         $query = RosterItem::query()
             ->where('user_id', $userId)
             ->where('source', $source)
-            ->whereNotNull('source_external_id')
             ->where('starts_at', '>=', $start)
             ->where('starts_at', '<', $end)
             ->where(function ($query) {
                 $query->where('is_actual', true)
                     ->orWhere('is_removed_from_source', false);
             });
-        if ($seenExternalIds) {
-            $query->whereNotIn('source_external_id', $seenExternalIds);
+        // A monthly snapshot also replaces non-flight activities, which have no external ID.
+        if ($seenRosterItemIds) {
+            $query->whereNotIn('id', $seenRosterItemIds);
         }
 
         $items = $query->get();
