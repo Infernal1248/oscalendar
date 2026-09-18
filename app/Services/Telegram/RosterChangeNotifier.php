@@ -16,6 +16,10 @@ class RosterChangeNotifier
     {
         if (! $event->user()->first()?->hasPermission('history.view')) return true;
         $this->disableSupersededButtons($event);
+        if ($event->user->telegram_notifications_enabled === false) {
+            $event->forceFill(['notified_at' => now()])->save();
+            return true;
+        }
         $messages = $event->telegram_messages ?? [];
         $deliveredChats = array_column($messages, 'chat_id');
         $accounts = TelegramAccount::query()->where('user_id', $event->user_id)->get();
@@ -67,6 +71,10 @@ class RosterChangeNotifier
         $this->removeButtons($event);
         if (! $event->user()->first()?->hasPermission('history.view')) return true;
         $accounts = TelegramAccount::query()->where('user_id', $event->user_id)->get();
+        if ($event->user->telegram_notifications_enabled === false) {
+            $event->forceFill(['acknowledgement_notified_at' => now()])->save();
+            return true;
+        }
         $messages = $event->acknowledgement_messages ?? [];
         $deliveredChats = array_column($messages, 'chat_id');
         foreach ($accounts as $account) {

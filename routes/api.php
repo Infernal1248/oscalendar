@@ -26,6 +26,11 @@ use Illuminate\Support\Facades\Route;
 Route::post('/auth/login', [AccountController::class, 'login'])->middleware('throttle:10,1');
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/account', [AccountController::class, 'me']);
+    Route::get('/notifications', [\App\Http\Controllers\NotificationController::class, 'show']);
+    Route::patch('/notifications', [\App\Http\Controllers\NotificationController::class, 'update']);
+    Route::post('/notifications/devices', [\App\Http\Controllers\NotificationController::class, 'subscribe'])->middleware('throttle:10,1');
+    Route::delete('/notifications/devices/{device}', [\App\Http\Controllers\NotificationController::class, 'destroy'])->whereNumber('device');
+    Route::post('/notifications/devices/{device}/test', [\App\Http\Controllers\NotificationController::class, 'test'])->whereNumber('device')->middleware('throttle:3,1');
     Route::get('/subscription', [\App\Http\Controllers\SubscriptionController::class, 'show']);
     Route::get('/admin/users/{user}/subscription', [\App\Http\Controllers\SubscriptionController::class, 'adminShow']);
     Route::post('/admin/users/{user}/subscription/payments', [\App\Http\Controllers\SubscriptionController::class, 'store']);

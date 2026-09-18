@@ -9,6 +9,7 @@ class Kernel extends ConsoleKernel
     protected function schedule(\Illuminate\Console\Scheduling\Schedule $schedule)
     {
         $schedule->command('monitor:check')->everyMinute()->withoutOverlapping(10);
+        $schedule->command('push:send')->everyMinute()->withoutOverlapping(10);
     }
 
     /**

@@ -86,6 +86,10 @@ class AccountController extends Controller
 
     public function logout(Request $request): JsonResponse
     {
+        if (is_string($endpoint = $request->input('push_endpoint'))) {
+            \App\Models\PushSubscription::where('user_id', $request->user()->id)
+                ->where('endpoint_hash', hash('sha256', $endpoint))->delete();
+        }
         $request->user()->currentAccessToken()?->delete();
 
         return response()->json(['ok' => true]);
