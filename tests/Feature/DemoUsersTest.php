@@ -8,6 +8,54 @@ use Tests\TestCase;
 
 class DemoUsersTest extends TestCase
 {
+    public function test_demo_reports_are_visible_only_to_owner_and_admin_including_filter_options(): void
+    {
+        config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:', 'cache.default' => 'array']);
+        DB::purge('sqlite');
+        Artisan::call('migrate', ['--force' => true]);
+        $this->assertSame(1, Artisan::call('demo:reports'));
+        Artisan::call('demo:create');
+        $demo = User::where('login', 'demo_premium')->sole();
+        $admin = User::create(['role' => 'admin', 'status' => 'active']);
+        $others = [User::where('login', 'demo_basic')->sole()];
+        foreach (['pilot', 'unit-head', 'senior-leader'] as $position) {
+            $user = User::create(['status' => 'active']);
+            $user->roles()->sync([Role::where('key', 'demo-viewer')->sole()->id, Role::where('key', $position)->sole()->id]);
+            $user->forceFill(['unit_number' => 'Демонстрационный отряд'])->save();
+            \App\Models\PortalProfile::create(['user_id' => $user->id, 'source' => 'test',
+                'full_name' => $demo->portalProfile->full_name, 'personnel_number' => $demo->portalProfile->personnel_number, 'synced_at' => now()]);
+            $others[] = $user;
+        }
+        foreach ($others as $user) $this->grantSubscription($user);
+        foreach ([AirFase::class, RrjExpress::class, GreenZone::class] as $model) \App\Services\ReportFilterOptions::values($model);
+        $this->assertSame(0, Artisan::call('demo:reports'));
+        $this->assertSame(0, Artisan::call('demo:reports'));
+        foreach (['airfase' => AirFase::class, 'rrj-express' => RrjExpress::class, 'green-zone' => GreenZone::class] as $report => $model) {
+            $this->assertSame(10, $model::count());
+            // One ordinary row remains available to leaders and is not overwritten by the command.
+            $row = $model::first()->getAttributes();
+            unset($row['id']);
+            $row['demo_user_id'] = null;
+            $row['fingerprint'] = hash('sha256', 'ordinary-'.$model);
+            $row['flight_unit'] = 'Обычный отряд';
+            $row['pilot_personnel_number'] = $row['captain_code'] = '123456';
+            DB::table((new $model)->getTable())->insert($row);
+            \App\Services\ReportFilterOptions::invalidate($model);
+            foreach ([$demo, $admin] as $user) {
+                $this->actingAs($user)->getJson('/api/'.$report)->assertOk()->assertJsonPath('total', $user->isAdmin() ? 11 : 10);
+                $this->assertContains('Демонстрационный отряд', \App\Services\ReportFilterOptions::values($model, $user)['flight_unit']);
+            }
+            foreach ($others as $user) {
+                $this->actingAs($user)->getJson('/api/'.$report)->assertOk()->assertJsonPath('total', $user->pilotRole() === 'senior-leader' ? 1 : 0);
+                $this->assertNotContains('Демонстрационный отряд', \App\Services\ReportFilterOptions::values($model, $user)['flight_unit']);
+                $this->actingAs($user)->getJson('/api/'.$report.'?filters[flight_unit]='.urlencode('Демонстрационный отряд'))
+                    ->assertOk()->assertJsonPath('total', 0);
+            }
+            $this->assertSame(['Обычный отряд'], \App\Services\ReportFilterOptions::values($model)['flight_unit']);
+        }
+        $this->assertNotContains('Демонстрационный отряд', \App\Services\FlightUnitDirectory::values());
+    }
+
     public function test_demo_accounts_have_fake_private_plans_and_read_only_access_without_portal_jobs(): void
     {
         config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:']);

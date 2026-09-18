@@ -31,7 +31,7 @@ class AirFase extends Model
         'flight_unit' => 'Летный отряд',
     ];
 
-    protected $hidden = ['fingerprint', 'uploaded_by'];
+    protected $hidden = ['fingerprint', 'uploaded_by', 'demo_user_id'];
 
     protected $casts = ['report_event_count' => 'integer'];
 
@@ -40,7 +40,9 @@ class AirFase extends Model
         if ($user->status !== 'active') {
             return $query->whereRaw('1 = 0');
         }
-        if ($user->isAdmin() || $user->pilotRole() === 'senior-leader') {
+        if ($user->isAdmin()) return $query;
+        $query->where(fn (Builder $rows) => $rows->whereNull('demo_user_id')->orWhere('demo_user_id', $user->id));
+        if ($user->pilotRole() === 'senior-leader') {
             return $query;
         }
         if ($user->pilotRole() === 'unit-head') {

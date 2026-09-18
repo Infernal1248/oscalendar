@@ -27,7 +27,7 @@ class AirFaseController extends Controller
     {
         $this->permit($request, 'read');
         $model = $this->model($request);
-        $options = ReportFilterOptions::values($model);
+        $options = ReportFilterOptions::values($model, $request->user());
 
         return response()->json([
             'columns' => collect($model::COLUMNS)->map(fn ($label, $field) => compact('field', 'label'))->values(),
