@@ -32,18 +32,87 @@ class SubscriptionController extends Controller
     public function history(Request $request)
     {
         $this->admin($request);
-        $data = $request->validate(['page' => ['sometimes', 'integer', 'min:1'], 'search' => ['nullable', 'string', 'max:150']]);
-        return SubscriptionPayment::query()->with(['user:id,display_name', 'user.portalProfile:user_id,personnel_number'])
+        $columns = [
+            'id' => 'subscription_payments.id', 'user' => 'users.display_name', 'personnel_number' => 'portal_profiles.personnel_number',
+            'tier' => 'tier', 'amount' => 'amount_kopecks / 100.0', 'duration_days' => 'duration_days',
+            'paid_at' => 'DATE(paid_at)', 'starts_at' => 'DATE(starts_at)', 'ends_at' => 'DATE(ends_at)',
+            'source' => 'source', 'recorded_by' => 'recorded_by', 'comment' => "COALESCE(comment, '')",
+            'status' => "CASE WHEN canceled_at IS NULL THEN 'confirmed' ELSE 'canceled' END",
+        ];
+        $numeric = ['id', 'amount', 'duration_days', 'recorded_by'];
+        $dates = ['paid_at', 'starts_at', 'ends_at'];
+        $rules = [
+            'page' => ['sometimes', 'integer', 'min:1'], 'per_page' => ['sometimes', 'integer', 'between:1,100'],
+            'search' => ['nullable', 'string', 'max:150'],
+            'sort_by' => ['sometimes', Rule::in(array_keys($columns))], 'sort_order' => ['sometimes', Rule::in(['asc', 'desc'])],
+            'filter_rules' => ['sometimes', 'array:'.implode(',', array_keys($columns))],
+            'filter_rules.*' => ['required', 'array:operator,constraints'],
+            'filter_rules.*.operator' => ['required', Rule::in(['and', 'or'])],
+            'filter_rules.*.constraints' => ['required', 'array', 'min:1', 'max:5'],
+            'filter_rules.*.constraints.*' => ['required', 'array:matchMode,value'],
+        ];
+        foreach ($columns as $field => $expression) {
+            $comparable = in_array($field, [...$numeric, ...$dates], true);
+            $rules["filter_rules.$field.constraints.*.matchMode"] = ['required', Rule::in($comparable
+                ? ['equals', 'notEquals', 'lt', 'lte', 'gt', 'gte']
+                : ['contains', 'notContains', 'startsWith', 'endsWith', 'equals', 'notEquals'])];
+            $rules["filter_rules.$field.constraints.*.value"] = in_array($field, $numeric, true) ? ['required', 'numeric']
+                : (in_array($field, $dates, true) ? ['required', 'date_format:Y-m-d'] : ['required', 'string', 'max:255']);
+        }
+        $data = $request->validate($rules);
+        $query = SubscriptionPayment::query()->select('subscription_payments.*')
+            ->leftJoin('users', 'users.id', '=', 'subscription_payments.user_id')
+            ->leftJoin('portal_profiles', 'portal_profiles.user_id', '=', 'users.id')
+            ->with(['user:id,display_name', 'user.portalProfile:user_id,personnel_number'])
             ->when($data['search'] ?? null, fn ($query, $search) => $query->whereHas('user', fn ($users) => $users
                 ->whereRaw("display_name LIKE ? ESCAPE '!'", ['%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $search).'%'])
-                ->orWhereHas('portalProfile', fn ($profile) => $profile->where('personnel_number', $search))))
-            ->orderByDesc('id')->paginate(20);
+                ->orWhereHas('portalProfile', fn ($profile) => $profile->where('personnel_number', $search))));
+        foreach ($data['filter_rules'] ?? [] as $field => $filter) {
+            $query->where(function ($group) use ($columns, $field, $filter, $numeric) {
+                foreach ($filter['constraints'] as $constraint) {
+                    $mode = $constraint['matchMode']; $value = $constraint['value'];
+                    $operators = ['equals' => '=', 'notEquals' => '!=', 'lt' => '<', 'lte' => '<=', 'gt' => '>', 'gte' => '>='];
+                    if (isset($operators[$mode])) {
+                        $placeholder = in_array($field, $numeric, true) ? 'CAST(? AS DECIMAL(20, 2))' : '?';
+                        $group->whereRaw("({$columns[$field]}) {$operators[$mode]} $placeholder", [$value], $filter['operator']);
+                    } else {
+                        $escaped = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $value);
+                        $pattern = ($mode === 'startsWith' ? '' : '%').$escaped.($mode === 'endsWith' ? '' : '%');
+                        $operator = $mode === 'notContains' ? 'NOT LIKE' : 'LIKE';
+                        $group->whereRaw("({$columns[$field]}) $operator ? ESCAPE '!'", [$pattern], $filter['operator']);
+                    }
+                }
+            });
+        }
+        return $query->orderByRaw('('.$columns[$data['sort_by'] ?? 'id'].') '.($data['sort_order'] ?? 'desc'))
+            ->orderByDesc('subscription_payments.id')->paginate($data['per_page'] ?? 20);
     }
 
     public function show(Request $request)
     {
         abort_unless($request->user()->status === 'active', 403);
         return $this->data($request->user());
+    }
+
+    public function upgradeQuote(Request $request)
+    {
+        $user = $request->user();
+        abort_unless($user->status === 'active', 403);
+        abort_unless($user->subscriptionSummary()['tier'] === 'basic', 422, 'Повышение доступно для действующей базовой подписки.');
+        $prices = SubscriptionPrice::all()->keyBy(fn ($price) => $price->tier.':'.$price->days);
+        $periods = $user->subscriptionPayments()->whereNull('canceled_at')->where('tier', 'basic')
+            ->where('ends_at', '>=', now('UTC')->startOfDay())->orderBy('starts_at')->get()
+            ->map(function ($payment) use ($prices) {
+                $basic = $prices->get('basic:'.$payment->duration_days);
+                $extended = $prices->get('extended:'.$payment->duration_days);
+                abort_unless($basic && $extended, 422, 'Для одного из оплаченных сроков не заданы цены. Обратитесь к администратору.');
+                return ['days' => $payment->duration_days, 'starts_at' => $payment->starts_at->toDateString(),
+                    'ends_at' => $payment->ends_at->toDateString(), 'basic_kopecks' => $basic->price_kopecks,
+                    'extended_kopecks' => $extended->price_kopecks,
+                    'difference_kopecks' => max(0, $extended->price_kopecks - $basic->price_kopecks)];
+            });
+        return response()->json(['periods' => $periods, 'total_kopecks' => $periods->sum('difference_kopecks')])
+            ->header('Cache-Control', 'private, no-store');
     }
 
     public function adminShow(Request $request, User $user)

@@ -33,6 +33,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/notifications/devices/{device}/test', [\App\Http\Controllers\NotificationController::class, 'test'])->whereNumber('device')->middleware('throttle:3,1');
     Route::get('/subscription', [\App\Http\Controllers\SubscriptionController::class, 'show']);
     Route::get('/subscription/prices', [\App\Http\Controllers\SubscriptionController::class, 'prices']);
+    Route::get('/subscription/upgrade-quote', [\App\Http\Controllers\SubscriptionController::class, 'upgradeQuote']);
     Route::patch('/admin/subscription/prices/{price}', [\App\Http\Controllers\SubscriptionController::class, 'updatePrice']);
     Route::get('/admin/subscription/payments', [\App\Http\Controllers\SubscriptionController::class, 'history']);
     Route::get('/admin/users/{user}/subscription', [\App\Http\Controllers\SubscriptionController::class, 'adminShow']);
