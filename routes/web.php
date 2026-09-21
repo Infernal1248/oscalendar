@@ -24,4 +24,4 @@ Route::get('/{page?}', function () {
         'Content-Type' => 'text/html; charset=UTF-8',
         'Cache-Control' => 'no-cache',
     ]);
-})->where('page', 'login|dashboard|profile|workplan|history|airfase|green-zone|rrj-express|admin/(users|permissions)');
+})->where('page', 'login|dashboard|profile|workplan|history|airfase|green-zone|rrj-express|subscription/payment|admin/(users|permissions|subscriptions)');

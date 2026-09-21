@@ -242,13 +242,34 @@ class CheckoutTest extends TestCase
             $mock->shouldReceive('configured')->andReturn(true);
             $mock->shouldReceive('send')->once()->withArgs(fn ($target, $payload) => $target->id === $device->id && str_contains($payload['body'], 'ТЕСТОВЫЙ') && str_contains($payload['body'], '250,00'))->andReturn('sent');
         });
-        $order = $this->createOrder(); $this->succeed($order); $this->webhook($order)->assertOk();
-        $this->webhook($order)->assertOk(); $this->assertDatabaseCount('payment_notifications', 2);
         Http::fake(['https://api.telegram.org/*' => Http::sequence()->push(['ok' => false], 500)->push(['ok' => true, 'result' => ['message_id' => 1]])]);
-        Artisan::call('payments:notify');
+        $order = $this->createOrder(); $this->succeed($order); $this->webhook($order)->assertOk();
+        $this->assertSame(1, DB::table('payment_notifications')->whereNotNull('sent_at')->count());
+        $this->webhook($order)->assertOk(); $this->assertDatabaseCount('payment_notifications', 2);
         $this->assertTrue($this->buyer->fresh()->hasFullAccess());
         $this->assertSame(1, DB::table('payment_notifications')->whereNotNull('sent_at')->count());
         $this->travel(6)->minutes(); Artisan::call('payments:notify'); Artisan::call('payments:notify');
         $this->assertSame(2, DB::table('payment_notifications')->whereNotNull('sent_at')->count());
+    }
+
+    public function test_push_only_admin_failure_does_not_undo_payment_and_webhook_can_retry(): void
+    {
+        $admin = User::create(['role' => 'admin', 'timezone' => 'UTC']);
+        PushSubscription::create(['user_id' => $admin->id, 'endpoint_hash' => str_repeat('b', 64),
+            'endpoint' => 'https://fcm.googleapis.com/fcm/send/push-only', 'keys' => ['p256dh' => 'fixture', 'auth' => 'fixture']]);
+        $this->mock(WebPushSender::class, function ($mock) {
+            $mock->shouldReceive('configured')->andReturn(true);
+            $mock->shouldReceive('send')->once()->ordered()->andThrow(new \RuntimeException('Delivery failed'));
+            $mock->shouldReceive('send')->once()->ordered()->andReturn('sent');
+        });
+        $order = $this->createOrder(); $this->succeed($order);
+        $this->webhook($order)->assertOk();
+        $this->assertTrue($this->buyer->fresh()->hasFullAccess());
+        $this->assertDatabaseHas('payment_notifications', ['order_id' => $order->id, 'channel' => 'push', 'attempts' => 1, 'sent_at' => null]);
+        $this->travel(6)->minutes();
+        $this->webhook($order)->assertOk();
+        $this->webhook($order)->assertOk();
+        $this->assertSame(1, DB::table('payment_notifications')->whereNotNull('sent_at')->count());
+        $this->assertDatabaseCount('subscription_payments', 1);
     }
 }

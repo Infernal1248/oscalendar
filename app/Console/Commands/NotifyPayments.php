@@ -10,18 +10,21 @@ use Illuminate\Support\Facades\{Cache, DB, Log};
 
 class NotifyPayments extends Command
 {
-    protected $signature = 'payments:notify';
+    protected $signature = 'payments:notify {--order= : Deliver only this order}';
     protected $description = 'Deliver confirmed payment alerts independently of subscription activation';
     public function handle(WebPushSender $push): int
     {
-        $lock = Cache::lock('payments:notify', 180);
-        if (! $lock->get()) return self::SUCCESS;
-        try {
+        $orderId = $this->option('order');
             $deadline = microtime(true) + 40;
             foreach (DB::table('payment_notifications')->whereNull('sent_at')->where('attempts', '<', 10)
+                ->when($orderId, fn ($q) => $q->where('order_id', $orderId))
                 ->where(fn ($q) => $q->whereNull('attempted_at')->orWhere('attempted_at', '<', now()->subMinutes(5)))
                 ->orderBy('id')->limit(100)->get() as $delivery) {
                 if (microtime(true) >= $deadline) break;
+                $lock = Cache::lock('payment-notification:'.$delivery->id, 180);
+                if (! $lock->get()) continue;
+                try {
+                if (DB::table('payment_notifications')->where('id', $delivery->id)->whereNotNull('sent_at')->exists()) continue;
                 $admin = User::find($delivery->user_id);
                 if (! $admin || $admin->status !== 'active' || ! $admin->isAdmin()) continue;
                 if ($delivery->channel === 'telegram' && ! ($admin->telegram_notifications_enabled ?? true)) continue;
@@ -48,8 +51,8 @@ class NotifyPayments extends Command
                     }
                 } catch (\Throwable $e) { Log::warning('Payment notification failed', ['delivery_id' => $delivery->id, 'exception' => $e::class]); }
                 if ($sent) DB::table('payment_notifications')->where('id', $delivery->id)->update(['sent_at' => now()]);
+                } finally { $lock->release(); }
             }
-        } finally { $lock->release(); }
         return self::SUCCESS;
     }
 }

@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\{PaymentOrder, PushSubscription, SubscriptionPayment, SubscriptionPrice, User};
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Log;
 
 class SubscriptionCheckout
 {
@@ -95,7 +97,7 @@ class SubscriptionCheckout
             && ($remote['amount']['value'] ?? '') === $order->payload['amount']['value']
             && (! $order->provider_id || $order->provider_id === $remote['id'])
             && in_array($remote['status'] ?? '', ['pending', 'waiting_for_capture', 'succeeded', 'canceled'], true), 502, 'Данные платежа не прошли проверку. Обратитесь к администратору.');
-        return DB::transaction(function () use ($order, $remote) {
+        $result = DB::transaction(function () use ($order, $remote) {
             $user = User::lockForUpdate()->findOrFail($order->user_id);
             $order = PaymentOrder::lockForUpdate()->findOrFail($order->id);
             if ($order->processed_at || $order->status === 'canceled') return $order;
@@ -116,6 +118,15 @@ class SubscriptionCheckout
             } else $order->save();
             return $order;
         });
+        // Deliver only after commit: a notification failure must never roll back paid access.
+        if ($result->processed_at) {
+            try {
+                Artisan::call('payments:notify', ['--order' => $result->id]);
+            } catch (\Throwable $e) {
+                Log::warning('Payment notification failed', ['order_id' => $result->id, 'exception' => $e::class]);
+            }
+        }
+        return $result;
     }
 
     private function fulfill(PaymentOrder $order, User $user): void

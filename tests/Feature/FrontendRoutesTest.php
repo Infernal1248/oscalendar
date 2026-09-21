@@ -18,7 +18,7 @@ class FrontendRoutesTest extends TestCase
             $this->get('/')->assertStatus(503);
             file_put_contents($directory.'/index.html', '<!doctype html><html><body>Frontend fixture</body></html>');
 
-            foreach (['/', '/login', '/dashboard', '/profile', '/workplan', '/history', '/airfase', '/green-zone', '/rrj-express', '/admin/users', '/admin/permissions'] as $page) {
+            foreach (['/', '/login', '/dashboard', '/profile', '/workplan', '/history', '/airfase', '/green-zone', '/rrj-express', '/admin/users', '/admin/permissions', '/admin/subscriptions', '/subscription/payment?order=b0250024-1c81-4078-967d-a2fea8edf842'] as $page) {
                 $response = $this->get($page)->assertOk()->assertHeader('Content-Type', 'text/html; charset=UTF-8');
                 $this->assertSame($directory.'/index.html', $response->baseResponse->getFile()->getPathname());
                 $this->assertTrue($response->headers->hasCacheControlDirective('no-cache'));
