@@ -75,7 +75,7 @@ class User extends Authenticatable
         if ($this->relationLoaded('subscriptionPayments')) return $this->subscriptionSummary()['full_access'];
         // Both calendar dates are inclusive, including for legacy rows with a time component.
         return $this->status === 'active' && ($this->isAdmin() || $this->subscriptionPayments()
-            ->whereNull('canceled_at')->where('starts_at', '<', now('UTC')->startOfDay()->addDay())
+            ->where('grants_access', true)->whereNull('canceled_at')->where('starts_at', '<', now('UTC')->startOfDay()->addDay())
             ->where('ends_at', '>=', now('UTC')->startOfDay())->exists());
     }
 
@@ -83,7 +83,7 @@ class User extends Authenticatable
     {
         if ($this->relationLoaded('subscriptionPayments')) return $this->subscriptionSummary()['reports_access'];
         return $this->status === 'active' && ($this->isAdmin() || $this->subscriptionPayments()
-            ->where('tier', 'extended')->whereNull('canceled_at')
+            ->where('grants_access', true)->where('tier', 'extended')->whereNull('canceled_at')
             ->where('starts_at', '<', now('UTC')->startOfDay()->addDay())
             ->where('ends_at', '>=', now('UTC')->startOfDay())->exists());
     }
@@ -91,8 +91,8 @@ class User extends Authenticatable
     public function subscriptionSummary(): array
     {
         $payments = $this->relationLoaded('subscriptionPayments')
-            ? $this->subscriptionPayments->whereNull('canceled_at')->sortBy('starts_at')
-            : $this->subscriptionPayments()->whereNull('canceled_at')->orderBy('starts_at')->get(['id', 'user_id', 'starts_at', 'ends_at', 'tier']);
+            ? $this->subscriptionPayments->where('grants_access', true)->whereNull('canceled_at')->sortBy('starts_at')
+            : $this->subscriptionPayments()->where('grants_access', true)->whereNull('canceled_at')->orderBy('starts_at')->get(['id', 'user_id', 'starts_at', 'ends_at', 'tier', 'grants_access']);
         $today = now('UTC')->toDateString();
         $current = $payments->filter(fn ($payment) => $payment->starts_at->toDateString() <= $today && $payment->ends_at->toDateString() >= $today);
         $active = $current->firstWhere('tier', 'extended') ?? $current->first();

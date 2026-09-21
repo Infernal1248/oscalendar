@@ -38,6 +38,7 @@ class SubscriptionController extends Controller
             'paid_at' => 'DATE(paid_at)', 'starts_at' => 'DATE(starts_at)', 'ends_at' => 'DATE(ends_at)',
             'source' => 'source', 'recorded_by' => 'recorded_by', 'comment' => "COALESCE(comment, '')",
             'status' => "CASE WHEN canceled_at IS NULL THEN 'confirmed' ELSE 'canceled' END",
+            'kind' => 'kind', 'order_id' => 'order_id',
         ];
         $numeric = ['id', 'amount', 'duration_days', 'recorded_by'];
         $dates = ['paid_at', 'starts_at', 'ends_at'];
@@ -98,20 +99,7 @@ class SubscriptionController extends Controller
     {
         $user = $request->user();
         abort_unless($user->status === 'active', 403);
-        abort_unless($user->subscriptionSummary()['tier'] === 'basic', 422, 'Повышение доступно для действующей базовой подписки.');
-        $prices = SubscriptionPrice::all()->keyBy(fn ($price) => $price->tier.':'.$price->days);
-        $periods = $user->subscriptionPayments()->whereNull('canceled_at')->where('tier', 'basic')
-            ->where('ends_at', '>=', now('UTC')->startOfDay())->orderBy('starts_at')->get()
-            ->map(function ($payment) use ($prices) {
-                $basic = $prices->get('basic:'.$payment->duration_days);
-                $extended = $prices->get('extended:'.$payment->duration_days);
-                abort_unless($basic && $extended, 422, 'Для одного из оплаченных сроков не заданы цены. Обратитесь к администратору.');
-                return ['days' => $payment->duration_days, 'starts_at' => $payment->starts_at->toDateString(),
-                    'ends_at' => $payment->ends_at->toDateString(), 'basic_kopecks' => $basic->price_kopecks,
-                    'extended_kopecks' => $extended->price_kopecks,
-                    'difference_kopecks' => max(0, $extended->price_kopecks - $basic->price_kopecks)];
-            });
-        return response()->json(['periods' => $periods, 'total_kopecks' => $periods->sum('difference_kopecks')])
+        return response()->json(app(\App\Services\SubscriptionCheckout::class)->quote($user))
             ->header('Cache-Control', 'private, no-store');
     }
 
@@ -148,9 +136,9 @@ class SubscriptionController extends Controller
                 return;
             }
             $start = $paidAt->copy();
-            abort_if($user->subscriptionPayments()->whereNull('canceled_at')->where('ends_at', '>=', now('UTC')->startOfDay())
+            abort_if($user->subscriptionPayments()->where('grants_access', true)->whereNull('canceled_at')->where('ends_at', '>=', now('UTC')->startOfDay())
                 ->where('tier', '!=', $data['tier'])->exists(), 422, 'Смена уровня действующей подписки пока недоступна. Выберите текущий уровень.');
-            $lastEnd = $user->subscriptionPayments()->whereNull('canceled_at')->max('ends_at');
+            $lastEnd = $user->subscriptionPayments()->where('grants_access', true)->whereNull('canceled_at')->max('ends_at');
             $nextStart = $lastEnd ? Carbon::parse($lastEnd, 'UTC')->startOfDay()->addDay() : null;
             if ($nextStart && $nextStart->greaterThan($start)) $start = $nextStart;
             $user->subscriptionPayments()->create([
@@ -172,6 +160,7 @@ class SubscriptionController extends Controller
         DB::transaction(function () use ($request, $user, $payment, $data) {
             User::query()->lockForUpdate()->findOrFail($user->id);
             $record = $user->subscriptionPayments()->lockForUpdate()->findOrFail($payment);
+            abort_if($record->order_id, 422, 'Онлайн-оплату нельзя отменить как ручную запись. Возврат оформляется отдельно в ЮKassa.');
             if ($record->canceled_at) return;
             $record->update(['canceled_at' => now(), 'canceled_by' => $request->user()->id, 'cancel_reason' => $data['reason']]);
         });
@@ -185,7 +174,7 @@ class SubscriptionController extends Controller
 
     private function data(User $user, bool $admin = false)
     {
-        $fields = ['id', 'source', 'tier', 'amount_kopecks', 'duration_days', 'paid_at', 'starts_at', 'ends_at', 'canceled_at'];
+        $fields = ['id', 'source', 'tier', 'kind', 'order_id', 'amount_kopecks', 'duration_days', 'paid_at', 'starts_at', 'ends_at', 'canceled_at'];
         if ($admin) $fields = [...$fields, 'recorded_by', 'comment', 'canceled_by', 'cancel_reason'];
         return response()->json([
             'subscription' => $user->subscriptionSummary(),

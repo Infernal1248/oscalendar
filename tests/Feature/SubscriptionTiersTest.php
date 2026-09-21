@@ -31,7 +31,7 @@ class SubscriptionTiersTest extends TestCase
         foreach ([$basic->id => 'basic', $extended->id => 'extended', $demo->id => 'extended'] as $id => $tier) {
             $this->assertSame($tier, User::find($id)->subscriptionSummary()['tier']);
         }
-        $after = DB::table('subscription_payments')->orderBy('id')->get()->map(function ($row) { $row = (array) $row; unset($row['tier']); return $row; })->all();
+        $after = DB::table('subscription_payments')->orderBy('id')->get()->map(function ($row) { $row = (array) $row; unset($row['tier'], $row['order_id'], $row['grants_access'], $row['kind']); return $row; })->all();
         $this->assertEquals($before, $after);
         $this->assertFalse($noPayment->hasFullAccess());
         $this->assertDatabaseMissing('roles', ['key' => 'airfase-reader']);

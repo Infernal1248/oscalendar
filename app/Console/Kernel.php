@@ -10,6 +10,8 @@ class Kernel extends ConsoleKernel
     {
         $schedule->command('monitor:check')->everyMinute()->withoutOverlapping(10);
         $schedule->command('push:send')->everyMinute()->withoutOverlapping(10);
+        $schedule->command('payments:reconcile')->everyMinute()->withoutOverlapping(5)->runInBackground();
+        $schedule->command('payments:notify')->everyMinute()->withoutOverlapping(5)->runInBackground();
     }
 
     /**

@@ -69,13 +69,13 @@ class TelegramBotClient
     {
         try {
             $response = Http::asJson()
+                ->connectTimeout(5)->timeout(15)
                 ->post($this->baseUrl.'/'.$method, $payload);
         } catch (\Throwable $exception) {
             Log::error('Telegram API request failed', [
                 'method' => $method,
                 'chat_id' => $payload['chat_id'] ?? null,
                 'exception' => get_class($exception),
-                'message' => $exception->getMessage(),
             ]);
 
             return null;

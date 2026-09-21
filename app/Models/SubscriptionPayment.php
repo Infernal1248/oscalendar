@@ -11,12 +11,13 @@ class SubscriptionPayment extends Model
 
     protected $guarded = ['id'];
     protected $fillable = ['user_id', 'request_id', 'source', 'tier', 'amount_kopecks', 'duration_days', 'paid_at',
-        'requested_starts_at', 'starts_at', 'ends_at', 'recorded_by', 'comment', 'canceled_at', 'canceled_by', 'cancel_reason'];
+        'requested_starts_at', 'starts_at', 'ends_at', 'recorded_by', 'comment', 'canceled_at', 'canceled_by', 'cancel_reason', 'order_id', 'kind', 'grants_access'];
     public function user(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo(User::class);
     }
     protected $casts = [
+        'grants_access' => 'boolean',
         'amount_kopecks' => 'integer', 'duration_days' => 'integer',
         'paid_at' => 'date:Y-m-d', 'starts_at' => 'date:Y-m-d',
         'ends_at' => 'date:Y-m-d', 'canceled_at' => 'datetime',
