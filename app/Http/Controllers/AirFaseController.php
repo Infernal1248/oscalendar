@@ -131,11 +131,10 @@ class AirFaseController extends Controller
     {
         $report = $request->route('report', 'airfase');
         abort_unless($request->user()->status === 'active'
-            && $request->user()->hasPermission("$report.view")
-            && $request->user()->hasPermission("$report.$permission"), 403);
+            && $request->user()->hasPermission("$report.view"), 403);
         if ($permission === 'read') {
-            abort_unless($request->user()->hasFullAccess(), 402, 'Просмотр записей доступен в полной версии.');
-        }
+            abort_unless($request->user()->hasReportsAccess(), 402, 'Просмотр записей доступен в расширенной подписке.');
+        } else abort_unless($request->user()->hasPermission("$report.$permission"), 403);
     }
 
     private function accessNotice(Request $request): ?string

@@ -44,23 +44,23 @@ class AirFaseApiTest extends TestCase
         $this->grantSubscription($user);
         $this->actingAs($user)->getJson('/api/account')
             ->assertJsonMissingPath('permissions')->assertJsonMissingPath('role')
-            ->assertJsonPath('airfase_access.read', false)->assertJsonPath('airfase_access.import', false);
-        $this->getJson('/api/airfase')->assertForbidden();
+            ->assertJsonPath('airfase_access.read', true)->assertJsonPath('airfase_access.import', false);
+        $this->getJson('/api/airfase')->assertOk();
         $this->postJson('/api/airfase/import')->assertForbidden();
 
         $this->grantPermissions($user, ['airfase.view']);
-        $this->getJson('/api/account')->assertJsonFragment(['navigation' => ['profile', 'airfase']]);
-        $this->getJson('/api/airfase')->assertForbidden();
+        $this->getJson('/api/account')->assertJsonPath('airfase_access.read', true);
+        $this->getJson('/api/airfase')->assertOk();
         $this->postJson('/api/airfase/import')->assertForbidden();
         $this->grantPermissions($user, ['airfase.view', 'airfase.read']);
         $this->getJson('/api/airfase')->assertOk();
         $this->postJson('/api/airfase/import')->assertForbidden();
         $this->grantPermissions($user, ['airfase.view', 'airfase.import']);
         $this->postJson('/api/airfase/import')->assertUnprocessable()->assertJsonValidationErrors('file');
-        $this->getJson('/api/airfase')->assertForbidden();
+        $this->getJson('/api/airfase')->assertOk();
         $this->grantPermissions($user, ['airfase.read', 'airfase.import']);
-        $this->getJson('/api/airfase')->assertForbidden();
-        $this->postJson('/api/airfase/import')->assertForbidden();
+        $this->getJson('/api/airfase')->assertOk();
+        $this->postJson('/api/airfase/import')->assertUnprocessable();
         $this->patchJson("/api/admin/users/{$user->id}", ['status' => 'active', 'permissions' => ['airfase.view']])->assertForbidden();
 
         $admin = User::create(['role' => 'admin', 'status' => 'active']);

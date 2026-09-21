@@ -2,11 +2,11 @@
 
 return [
     'catalog' => [
-        'green-zone.view' => ['name' => 'Зелёная зона: страница', 'description' => 'Открытие страницы отчётов.', 'assignable' => true],
-        'green-zone.read' => ['name' => 'Зелёная зона: таблица', 'description' => 'Просмотр и фильтрация общей базы.', 'assignable' => true],
+        'green-zone.view' => ['name' => 'Зелёная зона: страница', 'description' => 'Доступна всем активным пользователям.', 'assignable' => false],
+        'green-zone.read' => ['name' => 'Зелёная зона: таблица', 'description' => 'Только по расширенной подписке.', 'assignable' => false],
         'green-zone.import' => ['name' => 'Зелёная зона: импорт', 'description' => 'Импорт XLS/XLSX в общую базу.', 'assignable' => true],
-        'rrj-express.view' => ['name' => 'RRJ-EXPRESS: страница', 'description' => 'Открытие страницы отчётов.', 'assignable' => true],
-        'rrj-express.read' => ['name' => 'RRJ-EXPRESS: таблица', 'description' => 'Просмотр и фильтрация общей базы.', 'assignable' => true],
+        'rrj-express.view' => ['name' => 'RRJ-EXPRESS: страница', 'description' => 'Доступна всем активным пользователям.', 'assignable' => false],
+        'rrj-express.read' => ['name' => 'RRJ-EXPRESS: таблица', 'description' => 'Только по расширенной подписке.', 'assignable' => false],
         'rrj-express.import' => ['name' => 'RRJ-EXPRESS: импорт', 'description' => 'Импорт XLS/XLSX в общую базу.', 'assignable' => true],
         'dashboard.view' => [
             'name' => 'Дашборд',
@@ -30,13 +30,13 @@ return [
         ],
         'airfase.view' => [
             'name' => 'AirFASE: страница',
-            'description' => 'Открытие страницы AirFASE. Чтение таблицы и импорт выдаются отдельно.',
-            'assignable' => true,
+            'description' => 'Доступна всем активным пользователям.',
+            'assignable' => false,
         ],
         'airfase.read' => [
             'name' => 'AirFASE: таблица',
-            'description' => 'Просмотр общей базы AirFASE, фильтрация и сортировка. Требует доступа к странице.',
-            'assignable' => true,
+            'description' => 'Только по расширенной подписке.',
+            'assignable' => false,
         ],
         'airfase.import' => [
             'name' => 'AirFASE: импорт',

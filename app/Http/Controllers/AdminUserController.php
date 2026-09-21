@@ -34,7 +34,7 @@ class AdminUserController extends Controller
         return response()->json(User::query()
             ->whereDoesntHave('roles', fn ($query) => $query->where('key', 'administrator'))
             ->with(['roles', 'portalCredentials:id,user_id,login,status', 'portalProfile:user_id,personnel_number', 'telegramAccounts:id,user_id,telegram_id,username'])
-            ->with(['subscriptionPayments' => fn ($query) => $query->whereNull('canceled_at')->select('id', 'user_id', 'starts_at', 'ends_at', 'canceled_at')])
+            ->with(['subscriptionPayments' => fn ($query) => $query->whereNull('canceled_at')->select('id', 'user_id', 'starts_at', 'ends_at', 'canceled_at', 'tier')])
             ->orderByRaw("CASE WHEN status = 'pending' THEN 0 ELSE 1 END")
             ->orderBy('display_name')->orderBy('id')->get()
             ->map(fn (User $user) => $this->userData($user)));
@@ -115,6 +115,7 @@ class AdminUserController extends Controller
             'id' => $user->id, 'display_name' => $user->display_name, 'status' => $user->status,
             'is_admin' => $user->isAdmin(),
             'subscription_paid_until' => $user->subscriptionSummary()['paid_until'],
+            'subscription_tier' => $user->subscriptionSummary()['tier'],
             'pilot_role' => $user->pilotRole(), 'unit_number' => $user->unit_number,
             'pilot_role_name' => Role::PILOT_ROLES[$user->pilotRole()] ?? null,
             'roles' => $user->roles->map(fn (Role $role) => ['id' => $role->id, 'name' => $role->name, 'is_pilot_role' => $role->isPilotRole()])->values(),

@@ -83,7 +83,7 @@ class PilotRolesTest extends TestCase
         $this->assertSame('active', $target->fresh()->status);
         $this->patchJson($path, ['status' => 'active', 'pilot_role' => 'unit-head', 'unit_number' => $unit])
             ->assertOk()->assertJsonPath('pilot_role', 'unit-head')->assertJsonPath('unit_number', $unit);
-        $this->assertEqualsCanonicalizing(['profile.view', 'dashboard.view', 'workplan.view', 'history.view'], $target->fresh()->effectivePermissions());
+        $this->assertEqualsCanonicalizing(['profile.view', 'dashboard.view', 'workplan.view', 'history.view', 'airfase.view', 'green-zone.view', 'rrj-express.view'], $target->fresh()->effectivePermissions());
         $this->patchJson($path, ['role_ids' => [Role::where('key', 'administrator')->sole()->id]])->assertForbidden();
         $this->patchJson($path, ['pilot_role' => 'senior-leader'])->assertOk()->assertJsonPath('unit_number', null);
         $this->assertCount(1, $target->fresh()->roles->filter(fn ($role) => $role->isPilotRole()));
@@ -98,8 +98,9 @@ class PilotRolesTest extends TestCase
         $this->actingAs($admin)->getJson('/api/admin/roles')->assertOk()->assertJsonFragment(['is_pilot_role' => true, 'editable' => false]);
         $this->patchJson('/api/admin/roles/'.$role->id, ['name' => 'Senior', 'permissions' => ['users.manage']])->assertUnprocessable();
         $this->deleteJson('/api/admin/roles/'.$role->id)->assertUnprocessable();
-        $this->patchJson($path, ['role_ids' => [Role::where('key', 'airfase-reader')->sole()->id]])->assertOk();
+        $this->patchJson($path, ['role_ids' => [Role::where('key', 'airfase-importer')->sole()->id]])->assertOk();
         $this->assertSame('senior-leader', $target->fresh()->pilotRole());
-        $this->assertTrue($target->fresh()->hasPermission('airfase.read'));
+        $this->assertFalse($target->fresh()->hasPermission('airfase.read'));
+        $this->assertTrue($target->fresh()->hasPermission('airfase.import'));
     }
 }

@@ -32,6 +32,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/notifications/devices/{device}', [\App\Http\Controllers\NotificationController::class, 'destroy'])->whereNumber('device');
     Route::post('/notifications/devices/{device}/test', [\App\Http\Controllers\NotificationController::class, 'test'])->whereNumber('device')->middleware('throttle:3,1');
     Route::get('/subscription', [\App\Http\Controllers\SubscriptionController::class, 'show']);
+    Route::get('/subscription/prices', [\App\Http\Controllers\SubscriptionController::class, 'prices']);
+    Route::patch('/admin/subscription/prices/{price}', [\App\Http\Controllers\SubscriptionController::class, 'updatePrice']);
+    Route::get('/admin/subscription/payments', [\App\Http\Controllers\SubscriptionController::class, 'history']);
     Route::get('/admin/users/{user}/subscription', [\App\Http\Controllers\SubscriptionController::class, 'adminShow']);
     Route::post('/admin/users/{user}/subscription/payments', [\App\Http\Controllers\SubscriptionController::class, 'store']);
     Route::post('/admin/users/{user}/subscription/payments/{payment}/cancel', [\App\Http\Controllers\SubscriptionController::class, 'cancel'])->whereNumber('payment');

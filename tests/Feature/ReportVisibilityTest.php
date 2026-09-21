@@ -79,7 +79,7 @@ class ReportVisibilityTest extends TestCase
         $this->getJson('/api/airfase/metadata')->assertJsonPath('options.event_text', ['Hidden', 'Visible']);
         $this->grantPermissions($noProfile, []);
         $this->setJob($noProfile, 'senior-leader');
-        $this->getJson('/api/airfase')->assertForbidden();
+        $this->getJson('/api/airfase')->assertOk(); // Extended access no longer depends on reading roles.
     }
 
     private function setJob(User $user, ?string $key, ?string $unit = null): void

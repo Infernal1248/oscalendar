@@ -27,7 +27,7 @@ class SubscriptionTest extends TestCase
 
     private function payment(array $replace = []): array
     {
-        return array_replace(['request_id' => (string) Str::uuid(), 'amount' => '199,90',
+        return array_replace(['request_id' => (string) Str::uuid(), 'tier' => 'extended', 'amount' => '199,90',
             'duration_days' => 30, 'paid_at' => now()->toDateString(), 'comment' => 'Private admin note'], $replace);
     }
 
@@ -235,7 +235,7 @@ class SubscriptionTest extends TestCase
         $this->get('/api/calendar/'.$feed->token.'.ics')->assertOk();
         foreach (['airfase', 'green-zone', 'rrj-express'] as $report) $this->getJson('/api/'.$report)->assertOk()->assertJsonPath('total', 0);
         $this->grantPermissions($user, ['profile.view']);
-        $this->getJson('/api/airfase')->assertForbidden(); // Payment does not grant permissions.
+        $this->getJson('/api/airfase')->assertOk(); // Extended subscription grants reading independently of roles.
         $user->update(['status' => 'blocked']);
         $this->assertFalse($user->fresh()->hasFullAccess());
         $this->get('/api/calendar/'.$feed->token.'.ics')->assertForbidden();
@@ -303,7 +303,8 @@ class SubscriptionTest extends TestCase
             $response = $this->actingAs($actor)->getJson('/api/admin/users')->assertOk();
             $queries = DB::getQueryLog();
             DB::disableQueryLog();
-            $this->assertCount(1, array_filter($queries, fn ($query) => str_contains($query['query'], 'subscription_payments')));
+            // One bulk load plus at most two checks for the requesting account, not per listed user.
+            $this->assertLessThanOrEqual(3, count(array_filter($queries, fn ($query) => str_contains($query['query'], 'subscription_payments'))));
             foreach ($response->json() as $row) {
                 $this->assertSame($row['id'] === $premium->id ? $expected : null, $row['subscription_paid_until']);
                 $this->assertArrayNotHasKey('subscription_payments', $row);

@@ -39,11 +39,11 @@ class AirfaseReportsTest extends TestCase
         $this->actingAs($user);
         foreach (['green-zone' => GreenZone::class, 'rrj-express' => RrjExpress::class] as $report => $model) {
             $this->grantPermissions($user, ['airfase.view', 'airfase.read', 'airfase.import']);
-            $this->getJson("/api/$report")->assertForbidden();
-            $this->getJson("/api/$report/metadata")->assertForbidden();
+            $this->getJson("/api/$report")->assertOk();
+            $this->getJson("/api/$report/metadata")->assertOk();
             $this->postJson("/api/$report/import")->assertForbidden();
             $this->grantPermissions($user, ["$report.view", "$report.import"]);
-            $this->getJson("/api/$report")->assertForbidden();
+            $this->getJson("/api/$report")->assertOk();
             $first = $this->row($model);
             $first['flight_unit'] = 'Отряд Север';
             $second = array_replace($first, ['flight_number' => '6002', 'flight_date' => '2026-08-02']);

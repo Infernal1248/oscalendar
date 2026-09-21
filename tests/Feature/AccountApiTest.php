@@ -122,7 +122,7 @@ class AccountApiTest extends TestCase
             ->assertOk()->assertJsonPath('user.id', $owner->id);
         $this->postJson('/api/auth/login', ['login' => 'oscalendar-vladimir', 'password' => 'local-test-password'])
             ->assertOk()->assertJsonPath('user.id', $developer->id)
-            ->assertJsonPath('user.navigation', ['profile', 'airfase'])
+            ->assertJsonPath('user.navigation', ['profile', 'airfase', 'green-zone', 'rrj-express'])
             ->assertJsonMissingPath('user.role')->assertJsonMissingPath('user.permissions');
         $this->postJson('/api/auth/login', ['login' => 'oscalendar-vladimir', 'password' => 'portal-password'])->assertUnprocessable();
         $this->postJson('/api/auth/login', ['login' => 'shared-portal', 'password' => 'local-test-password'])->assertUnprocessable();

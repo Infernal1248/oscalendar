@@ -90,7 +90,7 @@ class DemoUsersTest extends TestCase
             $this->assertCount(3, $user->rosterChangeEvents);
             $this->assertFalse($user->rosterChangeEvents()->whereIn('status', ['pending', 'acknowledgement_requested'])->exists());
             foreach (['airfase' => AirFase::class, 'green-zone' => GreenZone::class, 'rrj-express' => RrjExpress::class] as $report => $model) {
-                $this->assertTrue($user->hasPermission($report.'.read'));
+                $this->assertSame($plan === 'premium', $user->hasPermission($report.'.read'));
                 $this->assertSame(0, $model::visibleTo($user)->count());
                 $this->assertSame(1, $model::count(), 'Existing report data must remain untouched');
                 $response = $this->actingAs($user)->getJson('/api/'.$report);

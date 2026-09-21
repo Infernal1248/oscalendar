@@ -20,8 +20,7 @@ class CreateDemoUsers extends Command
         }
 
         $credentials = DB::transaction(function () {
-            $permissions = ['dashboard.view', 'profile.view', 'workplan.view', 'history.view',
-                'airfase.view', 'airfase.read', 'green-zone.view', 'green-zone.read', 'rrj-express.view', 'rrj-express.read'];
+            $permissions = ['dashboard.view', 'profile.view', 'workplan.view', 'history.view'];
             // A separate read-only role avoids inheriting locally customized default-user permissions.
             $role = Role::firstOrCreate(['key' => 'demo-viewer'], [
                 'name' => 'Демонстрационный просмотр', 'permissions' => $permissions,

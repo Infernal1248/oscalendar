@@ -281,10 +281,10 @@ class AccountController extends Controller
             'calendar_url' => $calendarUrl,
             'subscription' => $subscription,
             'report_preview' => match ($user->pilotRole()) {
-                'pilot' => 'В полной версии вы сможете увидеть ваши записи.',
-                'unit-head' => 'В полной версии вы сможете увидеть записи по вашему лётному отряду.',
-                'senior-leader' => 'В полной версии вы сможете увидеть все записи.',
-                default => 'В полной версии вы сможете увидеть записи, доступные вам после назначения должности администратором.',
+                'pilot' => 'С расширенной подпиской вы сможете увидеть ваши записи.',
+                'unit-head' => 'С расширенной подпиской вы сможете увидеть записи по вашему лётному отряду.',
+                'senior-leader' => 'С расширенной подпиской вы сможете увидеть все записи.',
+                default => 'С расширенной подпиской вы сможете увидеть записи, доступные вам после назначения должности администратором.',
             },
             'users_access' => [
                 'manage' => $user->hasPermission('users.view') && $user->hasPermission('users.manage'),
@@ -308,6 +308,7 @@ class AccountController extends Controller
                 in_array('rrj-express.view', $permissions, true) ? 'rrj-express' : null,
                 in_array('users.view', $permissions, true) ? 'admin.users' : null,
                 $user->isAdmin() ? 'admin.permissions' : null,
+                $user->isAdmin() ? 'admin.subscriptions' : null,
             ])),
         ];
     }

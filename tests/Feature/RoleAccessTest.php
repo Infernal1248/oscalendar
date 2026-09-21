@@ -24,29 +24,30 @@ class RoleAccessTest extends TestCase
         $admin = User::create(['role' => 'admin']);
         $user = User::create([]);
         $this->assertTrue($user->hasPermission('workplan.view'));
-        $this->assertFalse($user->hasPermission('airfase.view'));
+        $this->assertTrue($user->hasPermission('airfase.view'));
         $this->actingAs($user)->getJson('/api/admin/roles')->assertForbidden();
         $this->getJson('/api/admin/permissions')->assertForbidden();
         $this->postJson('/api/admin/roles', ['name' => 'Forged', 'permissions' => []])->assertForbidden();
 
         $role = $this->actingAs($admin)->postJson('/api/admin/roles', [
-            'name' => 'Аналитик', 'description' => 'Просмотр отчётов', 'permissions' => ['airfase.read'],
+            'name' => 'Аналитик', 'description' => 'Импорт отчётов', 'permissions' => ['airfase.import'],
         ])->assertCreated()->json();
-        $this->assertContains('airfase.view', $role['permissions']);
+        $this->assertContains('airfase.import', $role['permissions']);
         $basic = Role::where('key', 'user')->sole();
         $this->patchJson("/api/admin/users/{$user->id}", ['role_ids' => [$basic->id, $role['id']]])->assertOk();
         $this->assertTrue($user->fresh()->hasPermission('workplan.view'));
-        $this->assertTrue($user->fresh()->hasPermission('airfase.read'));
+        $this->assertFalse($user->fresh()->hasPermission('airfase.read'));
         $this->grantSubscription($user);
         $this->actingAs($user->fresh())->getJson('/api/airfase')->assertOk();
 
         $this->actingAs($admin)->deleteJson('/api/admin/roles/'.$role['id'])->assertUnprocessable();
         $this->patchJson('/api/admin/roles/'.$role['id'], ['name' => 'Аналитик', 'permissions' => []])->assertOk();
-        $this->actingAs($user->fresh())->getJson('/api/airfase')->assertForbidden();
+        $this->actingAs($user->fresh())->getJson('/api/airfase')->assertOk();
+        $this->postJson('/api/airfase/import')->assertForbidden();
         $this->actingAs($admin)->patchJson("/api/admin/users/{$user->id}", ['role_ids' => [$basic->id]])->assertOk();
         $this->deleteJson('/api/admin/roles/'.$role['id'])->assertOk();
 
-        foreach (['roles.manage', 'unknown.permission'] as $permission) {
+        foreach (['roles.manage', 'unknown.permission', 'airfase.read', 'green-zone.read', 'rrj-express.read', 'airfase.view'] as $permission) {
             $this->postJson('/api/admin/roles', ['name' => 'Escalation', 'permissions' => [$permission]])->assertUnprocessable();
         }
         $this->patchJson("/api/admin/users/{$user->id}", ['status' => 'active', 'permissions' => []])->assertUnprocessable();
@@ -187,12 +188,12 @@ class RoleAccessTest extends TestCase
         $migration = require database_path('migrations/2026_09_09_000001_create_access_roles.php');
         $migration->up();
         foreach ($ids as $i => $id) {
-            $expected = array_unique(['profile.view', ...($sets[$i] ?? config('permissions.defaults'))]);
+            $expected = array_unique(['profile.view', 'airfase.view', 'green-zone.view', 'rrj-express.view', ...($sets[$i] ?? config('permissions.defaults'))]);
             $this->assertEqualsCanonicalizing($expected, User::findOrFail($id)->effectivePermissions());
         }
         $this->assertTrue(User::findOrFail($adminId)->isAdmin());
         $this->assertSame(User::findOrFail($ids[2])->roles->sole()->id, User::findOrFail($ids[4])->roles->sole()->id);
-        $this->assertFalse(User::findOrFail($ids[0])->hasPermission('airfase.view'));
+        $this->assertTrue(User::findOrFail($ids[0])->hasPermission('airfase.view'));
         $migration->down();
         $this->assertFalse(Schema::hasTable('roles'));
         $this->assertSame('admin', DB::table('users')->where('id', $adminId)->value('role'));

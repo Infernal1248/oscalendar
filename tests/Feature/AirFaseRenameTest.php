@@ -18,7 +18,14 @@ class AirFaseRenameTest extends TestCase
         parent::setUp();
         config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:']);
         DB::purge('sqlite');
-        Artisan::call('migrate', ['--force' => true]);
+        $this->migrateHistoricalSchema();
+        Schema::table('subscription_payments', fn ($table) => $table->string('tier')->default('extended'));
+    }
+
+    private function migrateHistoricalSchema(): void
+    {
+        $paths = array_values(array_filter(glob(database_path('migrations/*.php')), fn ($path) => basename($path) < '2026_09_21'));
+        Artisan::call('migrate', ['--force' => true, '--path' => $paths, '--realpath' => true]);
     }
 
     private function migration(): \Illuminate\Database\Migrations\Migration
@@ -58,9 +65,9 @@ class AirFaseRenameTest extends TestCase
         $this->assertSame('Мой импорт', $importer->fresh()->name);
         $this->assertSame(['airfase.import', 'users.view'], $custom->fresh()->permissions);
         $this->assertSame(['airfase.view', 'airfase.read', 'workplan.view'], $user->fresh()->permissions);
-        $this->assertEqualsCanonicalizing(['profile.view', 'airfase.view', 'airfase.read', 'airfase.import', 'users.view'], $user->fresh()->effectivePermissions());
+        $this->assertEqualsCanonicalizing(['profile.view', 'airfase.view', 'green-zone.view', 'rrj-express.view', 'airfase.import', 'users.view'], $user->fresh()->effectivePermissions());
         $this->actingAs($user->fresh())->getJson('/api/account')->assertOk()
-            ->assertJsonPath('airfase_access.read', true)->assertJsonPath('airfase_access.import', true)
+            ->assertJsonPath('airfase_access.read', false)->assertJsonPath('airfase_access.import', true)
             ->assertJsonMissingPath('deviations_access');
         $this->assertNull(Cache::get('report-filter-options:v1:deviations'));
         $this->assertNull(Cache::get('report-filter-options:v1:airfase'));
@@ -98,7 +105,7 @@ class AirFaseRenameTest extends TestCase
         $this->assertSame(0, Artisan::call('migrate:rollback', ['--step' => $steps, '--force' => true]));
         $this->assertFalse(Schema::hasTable('airfase'));
         $this->assertFalse(Schema::hasTable('deviations'));
-        $this->assertSame(0, Artisan::call('migrate', ['--force' => true]));
+        $this->migrateHistoricalSchema();
         $this->assertTrue(Schema::hasTable('airfase'));
         $this->assertSame(['airfase.view', 'airfase.read'], Role::where('key', 'airfase-reader')->sole()->permissions);
     }

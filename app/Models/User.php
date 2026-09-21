@@ -72,9 +72,19 @@ class User extends Authenticatable
 
     public function hasFullAccess(): bool
     {
+        if ($this->relationLoaded('subscriptionPayments')) return $this->subscriptionSummary()['full_access'];
         // Both calendar dates are inclusive, including for legacy rows with a time component.
         return $this->status === 'active' && ($this->isAdmin() || $this->subscriptionPayments()
             ->whereNull('canceled_at')->where('starts_at', '<', now('UTC')->startOfDay()->addDay())
+            ->where('ends_at', '>=', now('UTC')->startOfDay())->exists());
+    }
+
+    public function hasReportsAccess(): bool
+    {
+        if ($this->relationLoaded('subscriptionPayments')) return $this->subscriptionSummary()['reports_access'];
+        return $this->status === 'active' && ($this->isAdmin() || $this->subscriptionPayments()
+            ->where('tier', 'extended')->whereNull('canceled_at')
+            ->where('starts_at', '<', now('UTC')->startOfDay()->addDay())
             ->where('ends_at', '>=', now('UTC')->startOfDay())->exists());
     }
 
@@ -82,18 +92,22 @@ class User extends Authenticatable
     {
         $payments = $this->relationLoaded('subscriptionPayments')
             ? $this->subscriptionPayments->whereNull('canceled_at')->sortBy('starts_at')
-            : $this->subscriptionPayments()->whereNull('canceled_at')->orderBy('starts_at')->get(['id', 'user_id', 'starts_at', 'ends_at']);
+            : $this->subscriptionPayments()->whereNull('canceled_at')->orderBy('starts_at')->get(['id', 'user_id', 'starts_at', 'ends_at', 'tier']);
         $today = now('UTC')->toDateString();
-        $active = $payments->first(fn ($payment) => $payment->starts_at->toDateString() <= $today && $payment->ends_at->toDateString() >= $today);
+        $current = $payments->filter(fn ($payment) => $payment->starts_at->toDateString() <= $today && $payment->ends_at->toDateString() >= $today);
+        $active = $current->firstWhere('tier', 'extended') ?? $current->first();
         $until = $active?->ends_at?->copy()->startOfDay();
         if ($until) {
             // Extend the displayed end only through contiguous, non-canceled paid periods.
             foreach ($payments as $payment) {
+                if ($payment->tier !== $active->tier) continue;
                 if ($payment->starts_at->toDateString() > $until->copy()->addDay()->toDateString()) break;
                 if ($payment->ends_at->greaterThan($until)) $until = $payment->ends_at->copy()->startOfDay();
             }
         }
         return [
+            'tier' => $this->isAdmin() ? 'extended' : $active?->tier,
+            'reports_access' => $this->status === 'active' && ($this->isAdmin() || $active?->tier === 'extended'),
             'full_access' => $this->status === 'active' && ($this->isAdmin() || $active !== null),
             'status' => $this->isAdmin() ? 'included' : ($active ? 'active' : 'basic'),
             'paid_until' => $until?->toDateString(),
@@ -111,8 +125,12 @@ class User extends Authenticatable
             return array_keys(config('permissions.catalog'));
         }
 
-        return $this->roles->reject(fn (Role $role) => $role->isPilotRole())->flatMap(fn (Role $role) => $role->permissions)
-            ->push('profile.view')->unique()->values()->all();
+        $reportPermissions = ['airfase.view', 'airfase.read', 'green-zone.view', 'green-zone.read', 'rrj-express.view', 'rrj-express.read'];
+        $permissions = $this->roles->reject(fn (Role $role) => $role->isPilotRole())->flatMap(fn (Role $role) => $role->permissions)
+            ->diff($reportPermissions)->push('profile.view', 'airfase.view', 'green-zone.view', 'rrj-express.view');
+        if ($this->hasFullAccess()) $permissions = $permissions->merge(config('permissions.defaults'));
+        if ($this->hasReportsAccess()) $permissions = $permissions->merge(['airfase.read', 'green-zone.read', 'rrj-express.read']);
+        return $permissions->unique()->values()->all();
     }
 
     public function hasPermission(string $permission): bool
