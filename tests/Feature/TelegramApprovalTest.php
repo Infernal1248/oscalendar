@@ -20,6 +20,7 @@ class TelegramApprovalTest extends TestCase
         config([
             'database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:',
             'services.telegram_bot.token' => 'test-token',
+            'yookassa.frontend_url' => 'https://oscalendar.example',
         ]);
         DB::purge('sqlite');
         Artisan::call('migrate', ['--force' => true]);
@@ -64,6 +65,13 @@ class TelegramApprovalTest extends TestCase
 
         $this->approve($manager, $target);
         $this->assertSame('active', $target->user->fresh()->status);
+        Http::assertSent(fn ($request) => ($request['chat_id'] ?? null) === 200
+            && str_contains($request['text'] ?? '', 'логин и пароль рабочего портала')
+            && str_contains($request['text'], 'первой успешной синхронизации')
+            && str_contains($request['text'], 'не включает платную подписку')
+            && ($request['reply_markup']['inline_keyboard'][0][0]['url'] ?? '') === 'https://oscalendar.example'
+            && ($request['reply_markup']['inline_keyboard'][1][0]['url'] ?? '') === 'https://oscalendar.example/profile#subscription');
+        Http::assertNotSent(fn ($request) => str_contains($request['text'] ?? '', 'test-password'));
         $this->approve($both, $target);
         $this->assertCount(1, Http::recorded(fn ($request) => ($request['chat_id'] ?? null) === 200
             && ($request['text'] ?? '') === 'Доступ одобрен. Можно пользоваться меню.'));
@@ -76,6 +84,20 @@ class TelegramApprovalTest extends TestCase
             $pending = $this->account(300 + $actor->id, 'user', 'pending');
             $this->approve($actor, $pending);
             $this->assertSame('active', $pending->user->fresh()->status);
+        }
+    }
+
+    public function test_help_and_menu_links_work_for_existing_local_accounts(): void
+    {
+        $account = $this->account(901);
+        $account->user->update(['login' => 'local-fixture']);
+        foreach (['/help', 'Помощь', 'Подписка', 'Личный кабинет'] as $text) {
+            $before = Http::recorded()->count();
+            $this->message(901, $text);
+            $sent = Http::recorded()->slice($before)->values();
+            $this->assertCount(1, $sent);
+            $this->assertStringContainsString('отдельный логин и пароль OSCalendar', $sent[0][0]['text']);
+            $this->assertSame('https://oscalendar.example/profile#subscription', $sent[0][0]['reply_markup']['inline_keyboard'][1][0]['url']);
         }
     }
 

@@ -270,6 +270,12 @@ class TelegramBotService
             return;
         }
         switch ($text) {
+            case 'Помощь':
+            case 'Личный кабинет':
+            case 'Подписка':
+                $this->sendHelp($chatId, $account);
+                return;
+
             case 'Список рейсов':
                 $this->sendRosterList($chatId, $account);
                 return;
@@ -422,6 +428,7 @@ class TelegramBotService
             $this->client->sendMessage((int) $account->telegram_id, 'Доступ одобрен. Можно пользоваться меню.', [
                 'reply_markup' => $this->mainKeyboard($account),
             ]);
+            $this->sendHelp((int) $account->telegram_id, $account);
         }
     }
 
@@ -640,7 +647,18 @@ class TelegramBotService
 
     private function sendHelp(int $chatId, TelegramAccount $account): void
     {
-        $text = "Команды:\n/start - открыть бота\n/help - помощь\n";
+        $text = "<b>Добро пожаловать в OSCalendar!</b>\n\n"
+            ."OSCalendar помогает следить за рабочим планом и его изменениями.\n\n"
+            ."<b>Как войти в личный кабинет</b>\n"
+            .($account->user->login
+                ? "Используйте отдельный логин и пароль OSCalendar, выданные для вашего аккаунта.\n\n"
+                : "Используйте логин и пароль рабочего портала, которые вы указали при регистрации в боте. Отдельную учётную запись создавать не нужно.\n\n")
+            ."<b>В боте</b>\nСмотрите рабочий план кнопками «Список рейсов», «Ближайшее кольцо» и «Ближайший рейс», получайте уведомления об изменениях.\n\n"
+            ."<b>В личном кабинете</b>\nСмотрите план и историю изменений. В профиле настраивайте Telegram и push, подключайте календарь и оформляйте подписку. Push включаются отдельно на каждом устройстве.\n\n"
+            ."Рабочий план появится после одобрения доступа и первой успешной синхронизации.\n\n"
+            ."<b>Подписка</b>\nОдобрение аккаунта не включает платную подписку. Базовая открывает полный функционал без таблиц отчётов; расширенная дополнительно включает AirFASE, RRJ-Express и Зелёную зону.\n"
+            ."Кнопка «Подписка» открывает профиль: выберите тариф и срок, затем перейдите к оплате через ЮKassa.\n\n"
+            ."Команды:\n/start - открыть бота\n/help - эта инструкция\n";
 
         if ($this->canApproveUsers($account)) {
             $text .= "\nЗаявки:\n/pending - заявки на доступ (подтверждение кнопкой «Одобрить»)\n";
@@ -649,7 +667,13 @@ class TelegramBotService
             $text .= "\nАдмин:\n/approve TG_ID - одобрить пользователя\n/adduser TG_ID - заранее добавить пользователя";
         }
 
-        $this->client->sendMessage($chatId, $text);
+        $url = rtrim((string) (config('yookassa.frontend_url') ?: config('app.url')), '/');
+        $this->client->sendMessage($chatId, $text, [
+            'reply_markup' => ['inline_keyboard' => [
+                [['text' => 'Открыть личный кабинет', 'url' => $url]],
+                [['text' => 'Подписка', 'url' => $url.'/profile#subscription']],
+            ]],
+        ]);
     }
 
     private function sendPendingMessage(int $chatId, TelegramAccount $account): void
@@ -827,6 +851,8 @@ class TelegramBotService
             $keyboard[] = [['text' => 'Ближайшее кольцо'], ['text' => 'Ближайший рейс']];
         }
         $keyboard[] = [['text' => 'Мой календарь'], ['text' => 'Сменить пароль']];
+        $keyboard[] = [['text' => 'Личный кабинет'], ['text' => 'Подписка']];
+        $keyboard[] = [['text' => 'Помощь']];
 
         if ($this->canApproveUsers($account)) {
             $keyboard[] = [['text' => 'Заявки на доступ']];
