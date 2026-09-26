@@ -31,6 +31,7 @@ class CheckoutController extends Controller
     {
         abort_unless($request->user()->status === 'active', 403);
         return response()->json(PaymentOrder::where('user_id', $request->user()->id)
+            ->where('mode', 'live')
             ->whereIn('status', ['creating', 'pending', 'waiting_for_capture'])->latest()->get(['id', 'amount_kopecks', 'kind', 'tier', 'mode']))
             ->header('Cache-Control', 'private, no-store');
     }

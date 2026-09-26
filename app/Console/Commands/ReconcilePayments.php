@@ -18,6 +18,7 @@ class ReconcilePayments extends Command
         try {
             $deadline = microtime(true) + 40;
             foreach (PaymentOrder::whereIn('status', ['creating', 'pending', 'waiting_for_capture'])
+                ->where('mode', 'live')
                 ->where(fn ($q) => $q->whereNull('checked_at')->orWhere('checked_at', '<', now()->subMinutes(5)))
                 ->orderBy('checked_at')->limit(30)->get() as $order) {
                 if (microtime(true) >= $deadline) break;

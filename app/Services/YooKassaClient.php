@@ -10,7 +10,7 @@ class YooKassaClient
 {
     public function request(string $mode, string $method, string $path, ?array $payload = null, ?string $key = null): array
     {
-        abort_unless(in_array($mode, ['test', 'live'], true), 404);
+        abort_unless($mode === 'live', 410);
         $shop = config("yookassa.$mode.shop_id");
         $secret = config("yookassa.$mode.secret");
         abort_unless($shop && $secret, 503, 'Онлайн-оплата ещё не настроена.');

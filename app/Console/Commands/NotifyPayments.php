@@ -17,6 +17,7 @@ class NotifyPayments extends Command
         $orderId = $this->option('order');
             $deadline = microtime(true) + 40;
             foreach (DB::table('payment_notifications')->whereNull('sent_at')->where('attempts', '<', 10)
+                ->whereIn('order_id', PaymentOrder::where('mode', 'live')->select('id'))
                 ->when($orderId, fn ($q) => $q->where('order_id', $orderId))
                 ->where(fn ($q) => $q->whereNull('attempted_at')->orWhere('attempted_at', '<', now()->subMinutes(5)))
                 ->orderBy('id')->limit(100)->get() as $delivery) {
@@ -32,12 +33,12 @@ class NotifyPayments extends Command
                 $order = PaymentOrder::with('user.portalProfile')->findOrFail($delivery->order_id);
                 $label = ['purchase' => 'Покупка', 'renewal' => 'Продление', 'upgrade' => 'Повышение'][$order->kind];
                 $tier = $order->tier === 'extended' ? 'Расширенная' : 'Базовая';
-                $text = ($order->mode === 'test' ? 'ТЕСТОВЫЙ платёж — не доход' : 'Новый платёж OSCalendar')."\n"
+                $text = 'Новый платёж OSCalendar'."\n"
                     .mb_substr($order->user->display_name ?? 'Пользователь', 0, 100).' · таб. № '.($order->user->portalProfile?->personnel_number ?? '—')."\n"
                     .number_format($order->amount_kopecks / 100, 2, ',', ' ').' руб. · '.$order->paid_at->copy()->timezone($admin->timezone ?: 'UTC')->format('d.m.Y H:i')."\n"
                     ."$label · $tier · $order->days дней\nПлатёж: $order->provider_id"
                     .($order->review_reason ? "\nВНИМАНИЕ: $order->review_reason" : '')
-                    .($order->mode === 'live' ? "\nОформите чек в «Мой налог»." : '');
+                    ."\nОформите чек в «Мой налог».";
                 DB::table('payment_notifications')->where('id', $delivery->id)->update(['attempts' => $delivery->attempts + 1, 'attempted_at' => now()]);
                 $sent = false;
                 try {
@@ -46,7 +47,7 @@ class NotifyPayments extends Command
                         $sent = $account && count(app(TelegramBotClient::class)->sendMessage($account->telegram_id, htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'))) > 0;
                     } else {
                         $device = PushSubscription::where('user_id', $admin->id)->find($delivery->destination_id);
-                        $sent = $device && $push->send($device, ['title' => $order->mode === 'test' ? 'Тестовая оплата' : 'Новая оплата',
+                        $sent = $device && $push->send($device, ['title' => 'Новая оплата',
                             'body' => $text, 'tag' => 'payment-'.$order->id, 'url' => '/admin/subscriptions']) === 'sent';
                     }
                 } catch (\Throwable $e) { Log::warning('Payment notification failed', ['delivery_id' => $delivery->id, 'exception' => $e::class]); }

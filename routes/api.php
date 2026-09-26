@@ -40,6 +40,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('/admin/subscription/prices/{price}', [\App\Http\Controllers\SubscriptionController::class, 'updatePrice']);
     Route::get('/admin/subscription/payments', [\App\Http\Controllers\SubscriptionController::class, 'history']);
     Route::get('/admin/users/{user}/subscription', [\App\Http\Controllers\SubscriptionController::class, 'adminShow']);
+    Route::patch('/admin/users/{user}/subscription/tier', [\App\Http\Controllers\SubscriptionController::class, 'changeTier']);
     Route::post('/admin/users/{user}/subscription/payments', [\App\Http\Controllers\SubscriptionController::class, 'store']);
     Route::post('/admin/users/{user}/subscription/payments/{payment}/cancel', [\App\Http\Controllers\SubscriptionController::class, 'cancel'])->whereNumber('payment');
     Route::get('/account/photo', [AccountController::class, 'photo']);
@@ -83,7 +84,7 @@ Route::prefix('internal')
     });
 
 Route::post('/telegram/webhook', TelegramWebhookController::class);
-Route::post('/payments/yookassa/{mode}', [\App\Http\Controllers\CheckoutController::class, 'webhook'])->whereIn('mode', ['test', 'live']);
+Route::post('/payments/yookassa/{mode}', [\App\Http\Controllers\CheckoutController::class, 'webhook'])->whereIn('mode', ['live']);
 Route::post('/telegram/monitor/webhook', \App\Http\Controllers\MonitorWebhookController::class)
     ->withoutMiddleware('throttle:api')->middleware('throttle:monitor');
 Route::get('/calendar/{token}.ics', [CalendarFeedController::class, 'show']);

@@ -31,9 +31,8 @@ class SubscriptionCheckout
     public function order(User $user, array $input): PaymentOrder
     {
         abort_unless(config('yookassa.enabled'), 503, 'Онлайн-оплата временно недоступна.');
-        $mode = config('yookassa.mode');
-        abort_unless(in_array($mode, ['test', 'live'], true) && config("yookassa.$mode.shop_id") && config("yookassa.$mode.secret"), 503, 'Онлайн-оплата ещё не настроена.');
-        abort_if($mode === 'test' && ! in_array($user->id, config('yookassa.test_user_ids'), true), 403, 'Оплата пока доступна только тестовым аккаунтам.');
+        $mode = 'live';
+        abort_unless(config('yookassa.live.shop_id') && config('yookassa.live.secret'), 503, 'Онлайн-оплата ещё не настроена.');
         abort_if($user->isAdmin(), 422, 'У администратора уже есть полный доступ.');
         return DB::transaction(function () use ($user, $input, $mode) {
             $user = User::lockForUpdate()->findOrFail($user->id);
@@ -44,7 +43,7 @@ class SubscriptionCheckout
                     && ($input['kind'] === 'upgrade' || ($existing->tier === $input['tier'] && $existing->days === (int) $input['days'])), 409, 'Этот запрос уже использован для другого заказа.');
                 return $existing;
             }
-            $pending = PaymentOrder::where('user_id', $user->id)->whereIn('status', ['creating', 'pending', 'waiting_for_capture'])->first();
+            $pending = PaymentOrder::where('user_id', $user->id)->where('mode', 'live')->whereIn('status', ['creating', 'pending', 'waiting_for_capture'])->first();
             if ($pending) {
                 abort_unless($pending->mode === $mode && ($pending->kind === 'upgrade') === ($input['kind'] === 'upgrade')
                     && ($input['kind'] === 'upgrade' || ($pending->tier === $input['tier'] && $pending->days === (int) $input['days'])), 409,
@@ -81,6 +80,7 @@ class SubscriptionCheckout
 
     public function refresh(PaymentOrder $order): PaymentOrder
     {
+        abort_unless($order->mode === 'live', 410, 'Тестовые платежи больше не обслуживаются.');
         if ($order->processed_at || $order->status === 'canceled') return $order;
         abort_unless((string) config("yookassa.$order->mode.shop_id") === $order->shop_id, 503, 'Настройки магазина изменились. Требуется проверка платежа.');
         $remote = $order->provider_id ? $this->client->request($order->mode, 'GET', 'payments/'.$order->provider_id) : $this->client->create($order);
@@ -92,7 +92,7 @@ class SubscriptionCheckout
         abort_unless(preg_match('/\A[0-9a-f-]{36}\z/i', $remote['id'] ?? '')
             && ($remote['metadata']['order_id'] ?? null) === $order->id
             && (string) ($remote['recipient']['account_id'] ?? '') === $order->shop_id
-            && ($remote['test'] ?? null) === ($order->mode === 'test')
+            && $order->mode === 'live' && ($remote['test'] ?? null) === false
             && ($remote['amount']['currency'] ?? '') === 'RUB'
             && ($remote['amount']['value'] ?? '') === $order->payload['amount']['value']
             && (! $order->provider_id || $order->provider_id === $remote['id'])
@@ -134,7 +134,6 @@ class SubscriptionCheckout
         $start = $order->paid_at->copy()->startOfDay();
         $end = $start->copy()->addDays($order->days);
         $reason = null;
-        if ($order->mode === 'test' && ! in_array($user->id, config('yookassa.test_user_ids'), true)) $reason = 'Тестовый аккаунт больше не разрешён.';
         if ($user->status !== 'active') $reason = 'Аккаунт не активен: требуется проверка администратора.';
         if ($order->kind === 'upgrade') {
             $targets = $user->subscriptionPayments()->whereIn('id', array_column($order->periods, 'id'))->lockForUpdate()->get()->keyBy('id');
@@ -159,7 +158,7 @@ class SubscriptionCheckout
         }
         $order->review_reason = $reason;
         SubscriptionPayment::create(['user_id' => $user->id, 'request_id' => $order->id, 'order_id' => $order->id,
-            'source' => $order->mode === 'test' ? 'yookassa_test' : 'yookassa', 'kind' => $order->kind,
+            'source' => 'yookassa', 'kind' => $order->kind,
             'grants_access' => ! $reason && $order->kind !== 'upgrade', 'tier' => $order->tier,
             'amount_kopecks' => $order->amount_kopecks, 'duration_days' => $order->days, 'paid_at' => $order->paid_at,
             'starts_at' => $start, 'ends_at' => $end, 'recorded_by' => null,

@@ -22,8 +22,8 @@ class CheckoutTest extends TestCase
         Artisan::call('migrate', ['--force' => true]);
         $this->travelTo(now('UTC')->setDate(2026, 9, 21)->startOfDay());
         $this->buyer = User::create(['display_name' => 'Покупатель']);
-        config(['yookassa.enabled' => true, 'yookassa.mode' => 'test', 'yookassa.test.shop_id' => '900',
-            'yookassa.test.secret' => 'test_fixture', 'yookassa.test_user_ids' => [$this->buyer->id],
+        config(['yookassa.enabled' => true, 'yookassa.live.shop_id' => '900',
+            'yookassa.live.secret' => 'fixture',
             'yookassa.frontend_url' => 'https://example.test']);
         Http::preventStrayRequests();
         Http::fake(['https://api.yookassa.ru/v3/*' => function ($request) {
@@ -31,7 +31,7 @@ class CheckoutTest extends TestCase
                 $this->posts[] = $request;
                 $key = $request->header('Idempotence-Key')[0];
                 $id = PaymentOrder::findOrFail($key)->provider_id ?? (string) Str::uuid();
-                $this->remote[$id] ??= ['id' => $id, 'status' => 'pending', 'test' => true, 'paid' => false,
+                $this->remote[$id] ??= ['id' => $id, 'status' => 'pending', 'test' => false, 'paid' => false,
                     'amount' => $request['amount'], 'metadata' => $request['metadata'], 'recipient' => ['account_id' => '900'],
                     'confirmation' => ['confirmation_url' => 'https://yoomoney.ru/checkout/'.$id]];
                 return Http::response($this->remote[$id]);
@@ -57,7 +57,7 @@ class CheckoutTest extends TestCase
 
     private function webhook(PaymentOrder $order)
     {
-        return $this->postJson('/api/payments/yookassa/test', ['event' => 'payment.succeeded',
+        return $this->postJson('/api/payments/yookassa/live', ['event' => 'payment.succeeded',
             'object' => ['id' => $order->provider_id, 'status' => 'succeeded', 'amount' => ['value' => '0.01']]]);
     }
 
@@ -132,7 +132,7 @@ class CheckoutTest extends TestCase
         $this->assertNull($order->fresh()->provider_id);
         $this->travel(25)->hours();
         $this->remote[$remote['id']] = array_replace($remote, ['status' => 'succeeded', 'paid' => true, 'captured_at' => now('UTC')->toIso8601String()]);
-        $this->postJson('/api/payments/yookassa/test', ['event' => 'payment.succeeded', 'object' => ['id' => $remote['id']]])->assertOk();
+        $this->postJson('/api/payments/yookassa/live', ['event' => 'payment.succeeded', 'object' => ['id' => $remote['id']]])->assertOk();
         $this->assertSame($remote['id'], $order->fresh()->provider_id);
         $this->assertTrue($this->buyer->fresh()->hasFullAccess());
         $this->assertCount(1, $this->posts);
@@ -142,7 +142,7 @@ class CheckoutTest extends TestCase
     {
         $order = $this->createOrder(); $this->succeed($order);
         $valid = $this->remote[$order->provider_id];
-        foreach ([['test' => false], ['amount' => ['value' => '1.00', 'currency' => 'RUB']], ['recipient' => ['account_id' => 'wrong']],
+        foreach ([['test' => true], ['amount' => ['value' => '1.00', 'currency' => 'RUB']], ['recipient' => ['account_id' => 'wrong']],
             ['amount' => ['value' => '250.00', 'currency' => 'USD']], ['paid' => false]] as $bad) {
             $this->remote[$order->provider_id] = array_replace($valid, $bad);
             $this->webhook($order)->assertStatus(502);
@@ -177,12 +177,47 @@ class CheckoutTest extends TestCase
         $this->postJson('/api/subscription/orders', $body + ['amount_kopecks' => 1])->assertUnprocessable();
         $this->postJson('/api/subscription/orders', array_replace($body, ['days' => 999]))->assertUnprocessable();
         config(['yookassa.enabled' => false]); $this->postJson('/api/subscription/orders', $body)->assertStatus(503);
-        config(['yookassa.enabled' => true, 'yookassa.test_user_ids' => []]); $this->postJson('/api/subscription/orders', $body)->assertForbidden();
-        config(['yookassa.test_user_ids' => [$this->buyer->id]]);
+        config(['yookassa.enabled' => true]);
         $order = $this->createOrder();
         $this->postJson('/api/subscription/orders', array_replace($body, ['tier' => 'extended']))->assertConflict();
         $this->assertDatabaseCount('payment_orders', 1);
         $this->buyer->update(['status' => 'blocked']); $this->postJson('/api/subscription/orders', $body)->assertForbidden();
+    }
+
+    public function test_admin_can_change_tier_without_changing_money_or_dates(): void
+    {
+        $this->grantSubscription($this->buyer);
+        SubscriptionPayment::sole()->update(['tier' => 'basic', 'ends_at' => now('UTC')->addMonth()]);
+        $before = SubscriptionPayment::sole();
+        $url = '/api/admin/users/'.$this->buyer->id.'/subscription/tier';
+        $this->patchJson($url, ['tier' => 'extended'])->assertForbidden();
+        $admin = User::create(['role' => 'admin']);
+        $this->actingAs($admin)->patchJson($url, ['tier' => 'invalid'])->assertUnprocessable();
+        $this->patchJson($url, ['tier' => 'extended'])->assertOk();
+        $after = $before->fresh();
+        $this->assertSame('extended', $after->tier);
+        foreach (['amount_kopecks', 'starts_at', 'ends_at', 'duration_days', 'paid_at', 'source'] as $field) {
+            $this->assertEquals($before->$field, $after->$field);
+        }
+        $this->assertStringContainsString('Администратор #'.$admin->id, $after->comment);
+        $this->assertTrue($this->buyer->fresh()->hasReportsAccess());
+        $this->patchJson($url, ['tier' => 'basic'])->assertOk();
+        $this->assertFalse($this->buyer->fresh()->hasReportsAccess());
+        $this->assertDatabaseCount('subscription_payments', 1);
+        $this->actingAs($this->buyer);
+        $this->createOrder();
+        $this->actingAs($admin)->patchJson($url, ['tier' => 'extended'])->assertConflict();
+    }
+
+    public function test_legacy_test_orders_are_not_serviced_or_blocking_live_checkout(): void
+    {
+        $legacy = $this->createOrder();
+        $legacy->update(['mode' => 'test']);
+        $this->getJson('/api/subscription/orders/'.$legacy->id)->assertStatus(410);
+        $this->getJson('/api/subscription/orders')->assertExactJson([]);
+        $this->postJson('/api/payments/yookassa/test', [])->assertNotFound();
+        $this->createOrder();
+        $this->assertDatabaseCount('payment_orders', 2);
     }
 
     public function test_transport_failure_keeps_order_and_does_not_expose_provider_details(): void
@@ -240,7 +275,7 @@ class CheckoutTest extends TestCase
             'endpoint' => 'https://fcm.googleapis.com/fcm/send/fixture', 'keys' => ['p256dh' => 'fixture', 'auth' => 'fixture']]);
         $this->mock(WebPushSender::class, function ($mock) use ($device) {
             $mock->shouldReceive('configured')->andReturn(true);
-            $mock->shouldReceive('send')->once()->withArgs(fn ($target, $payload) => $target->id === $device->id && str_contains($payload['body'], 'ТЕСТОВЫЙ') && str_contains($payload['body'], '250,00'))->andReturn('sent');
+            $mock->shouldReceive('send')->once()->withArgs(fn ($target, $payload) => $target->id === $device->id && str_contains($payload['body'], 'Новый платёж') && str_contains($payload['body'], '250,00'))->andReturn('sent');
         });
         Http::fake(['https://api.telegram.org/*' => Http::sequence()->push(['ok' => false], 500)->push(['ok' => true, 'result' => ['message_id' => 1]])]);
         $order = $this->createOrder(); $this->succeed($order); $this->webhook($order)->assertOk();

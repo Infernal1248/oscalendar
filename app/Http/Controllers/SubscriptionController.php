@@ -153,6 +153,28 @@ class SubscriptionController extends Controller
         return $this->data($user->fresh(), true);
     }
 
+    public function changeTier(Request $request, User $user)
+    {
+        $this->admin($request);
+        $data = $request->validate(['tier' => ['required', Rule::in(array_keys(SubscriptionPayment::TIERS))]]);
+        DB::transaction(function () use ($request, $user, $data) {
+            $target = User::lockForUpdate()->findOrFail($user->id);
+            abort_if($target->isAdmin(), 422, 'У администратора уже полный доступ.');
+            abort_if(\App\Models\PaymentOrder::where('user_id', $target->id)->where('mode', 'live')
+                ->whereIn('status', ['creating', 'pending', 'waiting_for_capture'])->exists(), 409, 'Сначала завершите незавершённый платёж пользователя.');
+            $periods = $target->subscriptionPayments()->where('grants_access', true)->whereNull('canceled_at')
+                ->where('ends_at', '>=', now('UTC')->startOfDay())->lockForUpdate()->get();
+            abort_if($periods->isEmpty(), 422, 'Нет оплаченных периодов для изменения уровня.');
+            foreach ($periods as $period) {
+                if ($period->tier === $data['tier']) continue;
+                $note = now('UTC')->toIso8601String().' · Администратор #'.$request->user()->id
+                    .': уровень '.$period->tier.' → '.$data['tier'].' без изменения срока и суммы.';
+                $period->update(['tier' => $data['tier'], 'comment' => trim(($period->comment ?? '')."\n".$note)]);
+            }
+        });
+        return $this->data($user->fresh(), true);
+    }
+
     public function cancel(Request $request, User $user, int $payment)
     {
         $this->admin($request);
