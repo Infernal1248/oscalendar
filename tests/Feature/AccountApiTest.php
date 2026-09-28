@@ -214,8 +214,12 @@ class AccountApiTest extends TestCase
         $this->actingAs($user)->getJson('/api/workplan')
             ->assertOk()
             ->assertJsonStructure(['0' => ['updated_at']])
+            ->assertJsonPath('0.all_day', false)
             ->assertJsonPath('0.segments.0.flight_number', 'FV1234')
             ->assertJsonMissingPath('0.segments.0.crew');
+
+        $rosterItem->update(['source_payload' => ['all_day' => true]]);
+        $this->getJson('/api/workplan')->assertOk()->assertJsonPath('0.all_day', true);
 
         $this->actingAs($user)->getJson("/api/workplan/flights/{$segment->id}")
             ->assertOk()

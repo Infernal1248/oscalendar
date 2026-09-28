@@ -124,6 +124,7 @@ class AccountController extends Controller
             ->map(fn (RosterItem $item) => [
                 'id' => $item->id,
                 'kind' => $item->kind,
+                'all_day' => (bool) ($item->source_payload['all_day'] ?? false),
                 'title' => $item->title,
                 'flight_numbers_raw' => $item->flight_numbers_raw,
                 'route_raw' => $item->route_raw,
