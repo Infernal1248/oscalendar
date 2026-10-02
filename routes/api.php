@@ -56,6 +56,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/'.$report.'/metadata', [AirFaseController::class, 'metadata'])->defaults('report', $report);
         Route::post('/'.$report.'/import', [AirFaseController::class, 'import'])->defaults('report', $report)->middleware('throttle:10,1');
     }
+    Route::get('/workplan/flights/{flightSegment}/documents/{type}', [AccountController::class, 'flightDocument'])->whereIn('type', ['epz', 'ofp']);
     Route::get('/workplan/flights/{flightSegment}', [AccountController::class, 'flight']);
     Route::get('/admin/users', [AdminUserController::class, 'index']);
     Route::get('/admin/users/filters', [AdminUserController::class, 'filters']);
@@ -74,6 +75,7 @@ Route::prefix('internal')
     ->group(function () {
         Route::post('/parser-nodes/heartbeat', \App\Http\Controllers\Internal\ParserNodeController::class)
             ->withoutMiddleware('throttle:api')->middleware('throttle:monitor');
+        Route::post('/sync-runs/{syncRun}/documents', [\App\Http\Controllers\Internal\FlightDocumentController::class, 'store']);
         Route::post('/sync-runs/start', [SyncRunController::class, 'start']);
         Route::post('/sync-runs/{syncRun}/finish', [SyncRunController::class, 'finish']);
         Route::post('/sync-runs/{syncRun}/log', [SyncRunController::class, 'log']);

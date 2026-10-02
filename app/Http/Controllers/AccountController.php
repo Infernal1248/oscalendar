@@ -185,6 +185,23 @@ class AccountController extends Controller
         return response()->json(['status' => 'acknowledgement_requested'], 202);
     }
 
+    public function flightDocument(Request $request, int $flightSegment, string $type, \App\Services\FlightDocumentService $service)
+    {
+        $this->permit($request, 'workplan.view');
+        $segment = FlightSegment::whereKey($flightSegment)->where('user_id', $request->user()->id)
+            ->withActualRosterItem()->firstOrFail();
+        $document = \App\Models\FlightDocument::where('flight_segment_id', $segment->id)
+            ->where('user_id', $request->user()->id)->where('document_type', $type)->firstOrFail();
+        abort_unless($service->available($document, $segment), 404, 'Локальная копия недоступна. Откройте документ в OpenSky.');
+        $name = strtoupper($type).'-'.$segment->id.'.pdf';
+        return response()->file(\Illuminate\Support\Facades\Storage::disk('flight_documents')->path($document->storage_path), [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => ($request->boolean('download') ? 'attachment' : 'inline').'; filename="'.$name.'"',
+            'Cache-Control' => 'private, no-store', 'X-Content-Type-Options' => 'nosniff',
+            'Content-Security-Policy' => "sandbox",
+        ])->setPrivate();
+    }
+
     public function flight(Request $request, int $flightSegment): JsonResponse
     {
         $this->permit($request, 'workplan.view');
@@ -213,6 +230,7 @@ class AccountController extends Controller
             'open_doc_url' => $segment->open_doc_url,
             'download_doc_url' => $segment->download_doc_url,
             'ofp_url' => $segment->ofp_url,
+            'documents' => app(\App\Services\FlightDocumentService::class)->metadata($segment),
             'crew' => $segment->crewMembers->map(fn ($member) => [
                 'role' => $member->role,
                 'full_name' => $member->full_name,

@@ -29,6 +29,11 @@ return [
     */
 
     'disks' => [
+        'flight_documents' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private/flight-documents'),
+            'visibility' => 'private',
+        ],
 
         'local' => [
             'driver' => 'local',
