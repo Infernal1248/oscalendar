@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Models\{ParserTask, PortalCredential, Role, User};
+use App\Models\{ParserTask, PortalCredential, Role, User, TelegramAccount};
 use App\Services\ParserTaskScheduler;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\{Crypt, DB, Schema};
@@ -10,7 +10,7 @@ use RuntimeException;
 
 class AccountMergePortal extends Command
 {
-    protected $signature = 'account:merge-portal {source : Local login of the test account} {target : Local login of the administrator} {--target-id= : Expected administrator ID} {--apply : Apply the transfer and delete the source account}';
+    protected $signature = 'account:merge-portal {source : Local login of the test account} {target : Local login of the administrator} {--target-id= : Expected administrator ID} {--keep-telegram-id= : Keep only this Telegram identity from either account and attach it to the administrator} {--apply : Apply the transfer and delete the source account}';
     protected $description = 'Preview or transfer a test account portal data to an administrator, preserving administrator authentication';
 
     private const PORTAL_TABLES = ['roster_items', 'flight_segments', 'flight_documents', 'roster_change_events', 'portal_profiles'];
@@ -49,9 +49,20 @@ class AccountMergePortal extends Command
                     }
                 }
 
+                $telegramAccounts = TelegramAccount::whereIn('user_id', $ids)->orderBy('id')->lockForUpdate()->get();
+                $keepTelegram = null;
+                if ($this->option('keep-telegram-id') !== null) {
+                    $keepId = (string) $this->option('keep-telegram-id');
+                    $this->require(ctype_digit($keepId), 'Expected a numeric Telegram ID.');
+                    $keepTelegram = $telegramAccounts->first(fn ($account) => (string) $account->telegram_id === $keepId);
+                    $this->require($keepTelegram !== null, 'Selected Telegram ID does not belong to either account.');
+                } else {
+                    $this->require(! $telegramAccounts->contains('user_id', $from->id), 'Source has a Telegram binding. Select the identity to keep with --keep-telegram-id.');
+                }
+
                 // These identities could grant access to the administrator or silently lose
                 // financial/report records. Require separate handling instead of merging them.
-                foreach (['telegram_accounts' => ['user_id'], 'subscription_payments' => ['user_id', 'recorded_by', 'canceled_by'],
+                foreach (['subscription_payments' => ['user_id', 'recorded_by', 'canceled_by'],
                     'payment_orders' => ['user_id'], 'payment_notifications' => ['user_id'],
                     'airfase' => ['uploaded_by', 'demo_user_id'], 'green_zone_flights' => ['uploaded_by', 'demo_user_id'],
                     'rrj_express_events' => ['uploaded_by', 'demo_user_id']] as $table => $columns) {
@@ -69,6 +80,12 @@ class AccountMergePortal extends Command
                     if (Schema::hasTable($table)) $counts[] = [$table, DB::table($table)->where('user_id', $from->id)->count()];
                 }
                 $this->table(['Records to transfer', 'Count'], $counts);
+                if ($keepTelegram) {
+                    $this->line("Keep Telegram @{$keepTelegram->username} ({$keepTelegram->telegram_id}) on administrator #{$to->id}.");
+                    foreach ($telegramAccounts as $account) {
+                        if ($account->id !== $keepTelegram->id) $this->line("Detach Telegram @{$account->username} ({$account->telegram_id}) from OSCalendar.");
+                    }
+                }
                 $this->line('Administrator login, password, roles and existing sessions remain unchanged.');
                 $this->line('Source web tokens, calendar links and push subscriptions will be revoked, not inherited.');
                 $this->line('Source account will be deleted. Target roster task will be scheduled immediately.');
@@ -102,6 +119,14 @@ class AccountMergePortal extends Command
                 DB::table('roster_change_events')->where('user_id', $to->id)->update([
                     'telegram_messages' => null, 'acknowledgement_messages' => null,
                 ]);
+                if ($keepTelegram) {
+                    // In-progress conversations can contain source-account onboarding state.
+                    foreach ($telegramAccounts as $account) {
+                        $account->conversations()->delete();
+                        if ($account->id !== $keepTelegram->id) $account->delete();
+                    }
+                    $keepTelegram->forceFill(['user_id' => $to->id, 'is_admin' => true])->save();
+                }
                 $from->tokens()->delete();
                 DB::table('calendar_feeds')->where('user_id', $from->id)->delete();
                 if (Schema::hasTable('push_subscriptions')) DB::table('push_subscriptions')->where('user_id', $from->id)->delete();

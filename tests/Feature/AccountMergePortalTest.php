@@ -74,6 +74,35 @@ class AccountMergePortalTest extends TestCase
         $this->assertSame(2, PortalCredential::count());
     }
 
+    public function test_selected_telegram_moves_to_admin_and_other_binding_is_removed_only_on_apply(): void
+    {
+        $keep = $this->from->telegramAccounts()->create(['telegram_id' => 780382888, 'username' => 'Infernal1248']);
+        $old = $this->to->telegramAccounts()->create(['telegram_id' => 1695923047, 'username' => 'Vladimir1248']);
+        $keep->conversations()->create(['state' => 'onboarding', 'payload' => []]);
+        $arguments = ['source' => $this->from->login, 'target' => $this->to->login,
+            '--target-id' => $this->to->id, '--keep-telegram-id' => 780382888];
+        $this->assertSame(0, Artisan::call('account:merge-portal', $arguments));
+        $this->assertSame($this->from->id, $keep->fresh()->user_id);
+        $this->assertNotNull($old->fresh());
+        $this->assertSame(0, Artisan::call('account:merge-portal', $arguments + ['--apply' => true]), Artisan::output());
+        $this->assertSame($this->to->id, $keep->fresh()->user_id);
+        $this->assertTrue($keep->fresh()->user->isAdmin());
+        $this->assertTrue($keep->fresh()->is_admin);
+        $this->assertNull($old->fresh());
+        $this->assertDatabaseCount('telegram_conversations', 0);
+        $this->assertNull($this->from->fresh());
+    }
+
+    public function test_cannot_select_telegram_of_unrelated_user(): void
+    {
+        $other = User::create(['status' => 'active']);
+        $other->telegramAccounts()->create(['telegram_id' => 999]);
+        $this->assertSame(1, Artisan::call('account:merge-portal', ['source' => $this->from->login,
+            'target' => $this->to->login, '--target-id' => $this->to->id, '--keep-telegram-id' => 999, '--apply' => true]));
+        $this->assertNotNull($this->from->fresh());
+        $this->assertSame($other->id, \App\Models\TelegramAccount::where('telegram_id', 999)->sole()->user_id);
+    }
+
     public function test_existing_admin_data_and_wrong_target_id_block_transfer(): void
     {
         $this->assertSame(1, Artisan::call('account:merge-portal', ['source' => $this->from->login, 'target' => $this->to->login,
