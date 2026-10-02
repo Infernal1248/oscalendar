@@ -103,6 +103,65 @@ class AccountMergePortalTest extends TestCase
         $this->assertSame($other->id, \App\Models\TelegramAccount::where('telegram_id', 999)->sole()->user_id);
     }
 
+    public function test_payments_orders_and_audit_references_move_without_changing_financial_data(): void
+    {
+        $orderId = (string) \Illuminate\Support\Str::uuid();
+        DB::table('payment_orders')->insert([
+            'id' => $orderId, 'user_id' => $this->from->id, 'mode' => 'live', 'shop_id' => 'test',
+            'kind' => 'purchase', 'tier' => 'basic', 'days' => 30, 'amount_kopecks' => 12300,
+            'status' => 'succeeded', 'payload' => '{}', 'processed_at' => now(), 'paid_at' => now(),
+        ]);
+        $paymentId = DB::table('subscription_payments')->insertGetId([
+            'user_id' => $this->from->id, 'request_id' => $orderId, 'order_id' => $orderId,
+            'amount_kopecks' => 12300, 'duration_days' => 30, 'paid_at' => now(),
+            'starts_at' => now()->subDays(20), 'ends_at' => now()->addDays(10),
+            'recorded_by' => $this->from->id, 'canceled_by' => $this->from->id,
+            'canceled_at' => now()->subDay(), 'cancel_reason' => 'test cancellation',
+        ]);
+        $before = (array) DB::table('subscription_payments')->find($paymentId);
+        $this->assertSame(0, $this->runMerge());
+        $this->assertSame($before, (array) DB::table('subscription_payments')->find($paymentId));
+        $this->assertSame(0, $this->runMerge(true), Artisan::output());
+        $after = (array) DB::table('subscription_payments')->find($paymentId);
+        foreach (['user_id', 'recorded_by', 'canceled_by'] as $column) {
+            $this->assertSame($this->to->id, $after[$column]);
+            unset($before[$column], $after[$column]);
+        }
+        $this->assertSame($before, $after);
+        $this->assertSame($this->to->id, DB::table('payment_orders')->find($orderId)->user_id);
+        $this->assertSame('succeeded', DB::table('payment_orders')->find($orderId)->status);
+        $this->assertDatabaseCount('subscription_payments', 1);
+        $this->assertDatabaseCount('payment_orders', 1);
+        $this->assertNull($this->from->fresh());
+    }
+
+    public function test_pending_payment_alerts_follow_selected_telegram_without_duplicate_delivery(): void
+    {
+        $keep = $this->from->telegramAccounts()->create(['telegram_id' => 780382888]);
+        $old = $this->to->telegramAccounts()->create(['telegram_id' => 1695923047]);
+        $orderId = (string) \Illuminate\Support\Str::uuid();
+        DB::table('payment_orders')->insert([
+            'id' => $orderId, 'user_id' => $this->from->id, 'mode' => 'live', 'shop_id' => 'test',
+            'kind' => 'purchase', 'tier' => 'basic', 'days' => 30, 'amount_kopecks' => 10000,
+            'status' => 'succeeded', 'payload' => '{}', 'processed_at' => now(), 'paid_at' => now(),
+        ]);
+        foreach ([$old, $keep] as $account) {
+            DB::table('payment_notifications')->insert([
+                'order_id' => $orderId, 'user_id' => $account->user_id, 'channel' => 'telegram',
+                'destination_id' => $account->id, 'attempts' => 0,
+                'sent_at' => $account->id === $keep->id ? now() : null,
+            ]);
+        }
+        $this->assertSame(0, Artisan::call('account:merge-portal', ['source' => $this->from->login,
+            'target' => $this->to->login, '--target-id' => $this->to->id,
+            '--keep-telegram-id' => 780382888, '--apply' => true]), Artisan::output());
+        $this->assertDatabaseCount('payment_notifications', 2);
+        $kept = DB::table('payment_notifications')->where('destination_id', $keep->id)->sole();
+        $this->assertNotNull($kept->sent_at);
+        $this->assertSame($this->to->id, $kept->user_id);
+        $this->assertSame(10, DB::table('payment_notifications')->where('destination_id', $old->id)->sole()->attempts);
+    }
+
     public function test_existing_admin_data_and_wrong_target_id_block_transfer(): void
     {
         $this->assertSame(1, Artisan::call('account:merge-portal', ['source' => $this->from->login, 'target' => $this->to->login,

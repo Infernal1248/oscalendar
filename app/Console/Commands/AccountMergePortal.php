@@ -14,6 +14,13 @@ class AccountMergePortal extends Command
     protected $description = 'Preview or transfer a test account portal data to an administrator, preserving administrator authentication';
 
     private const PORTAL_TABLES = ['roster_items', 'flight_segments', 'flight_documents', 'roster_change_events', 'portal_profiles'];
+    private const RELATED_COLUMNS = [
+        'subscription_payments' => ['user_id', 'recorded_by', 'canceled_by'],
+        'payment_orders' => ['user_id'], 'payment_notifications' => ['user_id'],
+        'airfase' => ['uploaded_by', 'demo_user_id'],
+        'green_zone_flights' => ['uploaded_by', 'demo_user_id'],
+        'rrj_express_events' => ['uploaded_by', 'demo_user_id'],
+    ];
 
     public function handle(): int
     {
@@ -60,26 +67,21 @@ class AccountMergePortal extends Command
                     $this->require(! $telegramAccounts->contains('user_id', $from->id), 'Source has a Telegram binding. Select the identity to keep with --keep-telegram-id.');
                 }
 
-                // These identities could grant access to the administrator or silently lose
-                // financial/report records. Require separate handling instead of merging them.
-                foreach (['subscription_payments' => ['user_id', 'recorded_by', 'canceled_by'],
-                    'payment_orders' => ['user_id'], 'payment_notifications' => ['user_id'],
-                    'airfase' => ['uploaded_by', 'demo_user_id'], 'green_zone_flights' => ['uploaded_by', 'demo_user_id'],
-                    'rrj_express_events' => ['uploaded_by', 'demo_user_id']] as $table => $columns) {
-                    if (! Schema::hasTable($table)) continue;
-                    foreach ($columns as $column) {
-                        if (Schema::hasColumn($table, $column)) {
-                            $this->require(! DB::table($table)->where($column, $from->id)->exists(), "Source has records in {$table}.{$column}; handle these separately before deleting the account.");
-                        }
-                    }
-                }
-
                 $this->info("Source: #{$from->id} {$from->login}; target: #{$to->id} {$to->login}");
                 $counts = [];
                 foreach (array_merge(self::PORTAL_TABLES, ['parser_tasks', 'sync_runs']) as $table) {
                     if (Schema::hasTable($table)) $counts[] = [$table, DB::table($table)->where('user_id', $from->id)->count()];
                 }
+                foreach (self::RELATED_COLUMNS as $table => $columns) {
+                    if (! Schema::hasTable($table)) continue;
+                    foreach ($columns as $column) {
+                        if (Schema::hasColumn($table, $column)) {
+                            $counts[] = ["{$table}.{$column}", DB::table($table)->where($column, $from->id)->count()];
+                        }
+                    }
+                }
                 $this->table(['Records to transfer', 'Count'], $counts);
+                $this->line('Payment IDs, amounts, dates and statuses are preserved; account references are consolidated. No charges or subscription recalculations are performed.');
                 if ($keepTelegram) {
                     $this->line("Keep Telegram @{$keepTelegram->username} ({$keepTelegram->telegram_id}) on administrator #{$to->id}.");
                     foreach ($telegramAccounts as $account) {
@@ -102,6 +104,14 @@ class AccountMergePortal extends Command
                     if (Schema::hasTable($table)) DB::table($table)->where('user_id', $from->id)->update(['user_id' => $to->id]);
                 }
                 DB::table('sync_runs')->where('user_id', $from->id)->update(['user_id' => $to->id]);
+                foreach (self::RELATED_COLUMNS as $table => $columns) {
+                    if (! Schema::hasTable($table)) continue;
+                    foreach ($columns as $column) {
+                        if (Schema::hasColumn($table, $column)) {
+                            DB::table($table)->where($column, $from->id)->update([$column => $to->id]);
+                        }
+                    }
+                }
                 foreach ($tasks->where('user_id', $from->id) as $task) {
                     if ($task->task_type === 'roster_refresh') {
                         $existing = $tasks->first(fn ($other) => $other->user_id === $to->id && $other->task_type === 'roster_refresh' && $other->source === $task->source);
@@ -120,6 +130,21 @@ class AccountMergePortal extends Command
                     'telegram_messages' => null, 'acknowledgement_messages' => null,
                 ]);
                 if ($keepTelegram) {
+                    if (Schema::hasTable('payment_notifications')) {
+                        $removedAccountIds = $telegramAccounts->where('id', '!=', $keepTelegram->id)->pluck('id');
+                        $pending = DB::table('payment_notifications')->where('user_id', $to->id)
+                            ->where('channel', 'telegram')->whereIn('destination_id', $removedAccountIds)
+                            ->whereNull('sent_at')->lockForUpdate()->get();
+                        foreach ($pending as $delivery) {
+                            // Preserve historical deliveries; enqueue once for the selected identity.
+                            DB::table('payment_notifications')->insertOrIgnore([
+                                'order_id' => $delivery->order_id, 'user_id' => $to->id,
+                                'channel' => 'telegram', 'destination_id' => $keepTelegram->id,
+                                'attempts' => 0,
+                            ]);
+                            DB::table('payment_notifications')->where('id', $delivery->id)->update(['attempts' => 10]);
+                        }
+                    }
                     // In-progress conversations can contain source-account onboarding state.
                     foreach ($telegramAccounts as $account) {
                         $account->conversations()->delete();
