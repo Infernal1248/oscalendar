@@ -268,6 +268,9 @@ class ParserTaskFlowTest extends TestCase
         $this->assertSame('changed', $event->changes[0]['change_type']);
         $this->assertSame('ФВ6031/ФВ6032', $event->changes[0]['before']['flight_numbers_raw']);
         $this->assertSame('ФВ6033/ФВ6034', $event->changes[0]['after']['flight_numbers_raw']);
+        $this->assertNull($event->notified_at);
+        Artisan::call('telegram:notify-roster');
+        $event->refresh();
         $this->assertNotNull($event->notified_at);
         Http::assertSent(fn ($request) => str_contains((string) ($request['text'] ?? ''), '<b>Изменена задача:</b>'));
 
@@ -313,6 +316,9 @@ class ParserTaskFlowTest extends TestCase
 
         $event->refresh();
         $this->assertSame('acknowledged', $event->status);
+        $this->assertNull($event->acknowledgement_notified_at);
+        Artisan::call('telegram:notify-roster');
+        $event->refresh();
         $this->assertNotNull($event->acknowledgement_notified_at);
         Http::assertSent(fn ($request) => isset($request['text'])
             && str_contains((string) $request['text'], 'Актуальная задача'));

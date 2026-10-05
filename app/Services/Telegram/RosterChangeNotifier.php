@@ -14,8 +14,12 @@ class RosterChangeNotifier
 
     public function notifyPending(RosterChangeEvent $event): bool
     {
-        if (! $event->user()->first()?->hasPermission('history.view')) return true;
-        $this->disableSupersededButtons($event);
+        if ($event->notified_at) return true;
+        if (! $event->isCurrent() || $event->status !== 'pending') return true;
+        if (! $event->user()->first()?->hasPermission('history.view')) {
+            $event->forceFill(['notified_at' => now()])->save();
+            return true;
+        }
         if ($event->user->telegram_notifications_enabled === false) {
             $event->forceFill(['notified_at' => now()])->save();
             return true;
@@ -56,20 +60,19 @@ class RosterChangeNotifier
             $deliveredChats,
             true
         ));
-        if ($delivered) {
-            $event->forceFill([
-                'telegram_messages' => $messages,
-                'notified_at' => now(),
-            ])->save();
-        }
+        $event->forceFill(['telegram_messages' => $messages,
+            'notified_at' => $delivered ? now() : null])->save();
 
         return $delivered;
     }
 
     public function notifyAcknowledged(RosterChangeEvent $event): bool
     {
-        $this->removeButtons($event);
-        if (! $event->user()->first()?->hasPermission('history.view')) return true;
+        if ($event->acknowledgement_notified_at) return true;
+        if (! $event->user()->first()?->hasPermission('history.view')) {
+            $event->forceFill(['acknowledgement_notified_at' => now()])->save();
+            return true;
+        }
         $accounts = TelegramAccount::query()->where('user_id', $event->user_id)->get();
         if ($event->user->telegram_notifications_enabled === false) {
             $event->forceFill(['acknowledgement_notified_at' => now()])->save();
@@ -100,35 +103,31 @@ class RosterChangeNotifier
             $deliveredChats,
             true
         ));
-        if ($delivered) {
-            $event->forceFill([
-                'acknowledgement_messages' => $messages,
-                'acknowledgement_notified_at' => now(),
-            ])->save();
-        }
+        $event->forceFill(['acknowledgement_messages' => $messages,
+            'acknowledgement_notified_at' => $delivered ? now() : null])->save();
 
         return $delivered;
     }
 
-    public function removeButtons(RosterChangeEvent $event): void
+    public function removeButtons(RosterChangeEvent $event): bool
     {
-        foreach ($event->telegram_messages ?? [] as $message) {
+        if ($event->telegram_buttons_removed_at) return true;
+        $messages = $event->telegram_messages ?? [];
+        $done = true;
+        foreach ($messages as &$message) {
+            if (! empty($message['buttons_removed'])) continue;
             if (isset($message['chat_id'], $message['message_id'])) {
-                $this->client->removeInlineKeyboard((int) $message['chat_id'], (int) $message['message_id']);
+                if ($this->client->removeInlineKeyboard((int) $message['chat_id'], (int) $message['message_id'])) {
+                    $message['buttons_removed'] = true;
+                } else {
+                    $done = false;
+                }
             }
         }
-    }
-
-    private function disableSupersededButtons(RosterChangeEvent $event): void
-    {
-        RosterChangeEvent::query()
-            ->where('user_id', $event->user_id)
-            ->where('source', $event->source)
-            ->where('period', $event->period)
-            ->where('status', 'superseded')
-            ->whereNotNull('telegram_messages')
-            ->get()
-            ->each(fn (RosterChangeEvent $oldEvent) => $this->removeButtons($oldEvent));
+        unset($message);
+        $event->forceFill(['telegram_messages' => $messages,
+            'telegram_buttons_removed_at' => $done ? now() : null])->save();
+        return $done;
     }
 
     private function pendingText(RosterChangeEvent $event): string

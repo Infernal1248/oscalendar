@@ -382,7 +382,7 @@ class TelegramBotService
                 return;
             }
             $event->refresh();
-            $this->rosterChangeNotifier->removeButtons($event);
+            // Button cleanup is retried by telegram:notify-roster.
             $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Подтверждение поставлено в очередь.');
             $this->client->sendMessage($chatId, 'Подтверждаем ознакомление с изменениями…');
             return;

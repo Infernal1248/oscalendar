@@ -45,13 +45,13 @@ class TelegramBotClient
         return $results;
     }
 
-    public function removeInlineKeyboard(int $chatId, int $messageId): void
+    public function removeInlineKeyboard(int $chatId, int $messageId): bool
     {
-        $this->request('editMessageReplyMarkup', [
+        return $this->request('editMessageReplyMarkup', [
             'chat_id' => $chatId,
             'message_id' => $messageId,
             'reply_markup' => ['inline_keyboard' => []],
-        ]);
+        ]) !== null;
     }
 
     public function answerCallbackQuery(string $callbackQueryId, ?string $text = null): void
@@ -67,12 +67,18 @@ class TelegramBotClient
 
     private function request(string $method, array $payload): ?array
     {
+        $started = microtime(true);
         try {
             $response = Http::asJson()
                 ->connectTimeout(5)->timeout(15)
                 ->post($this->baseUrl.'/'.$method, $payload);
         } catch (\Throwable $exception) {
-            Log::error('Telegram API request failed', [
+            $cause = $exception;
+            while ($cause->getPrevious()) $cause = $cause->getPrevious();
+            $context = method_exists($cause, 'getHandlerContext') ? $cause->getHandlerContext() : [];
+            Log::warning('Telegram API connection failed', [
+                'duration_ms' => (int) ((microtime(true) - $started) * 1000),
+                'curl_errno' => $context['errno'] ?? null,
                 'method' => $method,
                 'chat_id' => $payload['chat_id'] ?? null,
                 'exception' => get_class($exception),
@@ -82,6 +88,13 @@ class TelegramBotClient
         }
 
         $data = $response->json() ?: [];
+
+        // Telegram reports an already-applied edit as HTTP 400. The desired state
+        // has been reached; do not log an error or retry it.
+        if ($method === 'editMessageReplyMarkup' && $response->status() === 400
+            && str_contains(strtolower($data['description'] ?? ''), 'message is not modified')) {
+            return [];
+        }
 
         if (! $response->successful() || ($data['ok'] ?? false) !== true) {
             Log::error('Telegram API request failed', [

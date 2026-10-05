@@ -39,6 +39,9 @@ class RosterChangeEvent extends Model
     ];
 
     protected $casts = [
+        'telegram_retry_at' => 'datetime',
+        'telegram_buttons_removed_at' => 'datetime',
+        'telegram_attempts' => 'integer',
         'changes' => 'array',
         'portal_state' => 'array',
         'telegram_messages' => 'array',
