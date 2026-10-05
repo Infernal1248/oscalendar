@@ -101,7 +101,7 @@ class SystemMonitorTest extends TestCase
 
     public function test_job_api_rate_limit_does_not_block_monitor_heartbeat(): void
     {
-        for ($i = 0; $i < 60; $i++) {
+        for ($i = 0; $i < 300; $i++) {
             $this->postJson('/api/internal/parser-jobs/claim')->assertUnauthorized();
         }
         $this->postJson('/api/internal/parser-jobs/claim')->assertStatus(429);

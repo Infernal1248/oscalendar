@@ -60,6 +60,12 @@ class RouteServiceProvider extends ServiceProvider
         RateLimiter::for('monitor', fn (Request $request) => Limit::perMinute(60)->by($request->ip()));
 
         RateLimiter::for('api', function (Request $request) {
+            // Parser nodes can share a NAT address. Polling must not starve result uploads.
+            if ($request->is('api/internal/*')) {
+                $claim = $request->is('api/internal/parser-jobs/claim');
+                return Limit::perMinute($claim ? 300 : 1200)
+                    ->by(($claim ? 'parser-claim:' : 'parser-results:').$request->ip());
+            }
             return Limit::perMinute(60)->by(optional($request->user())->id ?: $request->ip());
         });
     }
