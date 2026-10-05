@@ -63,6 +63,15 @@ class FlightDocumentsTest extends TestCase
         $this->assertNull($original->fresh()->last_error_at);
     }
 
+    public function test_pdf_with_large_suffix_is_preserved_and_missing_eof_is_rejected(): void
+    {
+        $bytes = self::PDF.str_repeat("\n<!-- portal suffix -->", 4000);
+        $this->upload($bytes)->assertOk();
+        $document = FlightDocument::first();
+        $this->assertSame($bytes, Storage::disk('flight_documents')->get($document->storage_path));
+        $this->upload("%PDF-1.4\ntruncated")->assertUnprocessable();
+    }
+
     public function test_documents_require_owner_and_permission_and_expire_before_cleanup(): void
     {
         $url = '/api/workplan/flights/'.$this->segment->id.'/documents/epz';

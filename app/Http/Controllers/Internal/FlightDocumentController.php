@@ -21,7 +21,7 @@ class FlightDocumentController extends Controller
             'failed' => ['required_without:file', 'in:1'],
         ]);
         $bytes = $request->file('file') ? file_get_contents($request->file('file')->getRealPath()) : null;
-        abort_if($bytes !== null && (! str_starts_with($bytes, '%PDF-') || ! str_contains(substr($bytes, -2048), '%%EOF')), 422, 'Expected a complete PDF document.');
+        abort_if($bytes !== null && (! str_starts_with($bytes, '%PDF-') || ! str_contains($bytes, '%%EOF')), 422, 'Expected a complete PDF document.');
         DB::transaction(function () use ($syncRun, $data, $bytes, $service) {
             $run = SyncRun::lockForUpdate()->findOrFail($syncRun->id);
             abort_unless($run->status === 'running' && $run->task_type === 'flight_details'
