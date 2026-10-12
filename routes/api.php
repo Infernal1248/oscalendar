@@ -25,6 +25,11 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('/auth/login', [AccountController::class, 'login'])->middleware('throttle:10,1');
 Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/pilot-checks', [\App\Http\Controllers\PilotCheckController::class, 'index']);
+    Route::patch('/pilot-checks/settings', [\App\Http\Controllers\PilotCheckController::class, 'settings']);
+    Route::post('/pilot-checks', [\App\Http\Controllers\PilotCheckController::class, 'store']);
+    Route::patch('/pilot-checks/{id}', [\App\Http\Controllers\PilotCheckController::class, 'update'])->whereNumber('id');
+    Route::delete('/pilot-checks/{id}', [\App\Http\Controllers\PilotCheckController::class, 'destroy'])->whereNumber('id');
     Route::get('/account', [AccountController::class, 'me']);
     Route::get('/notifications', [\App\Http\Controllers\NotificationController::class, 'show']);
     Route::patch('/notifications', [\App\Http\Controllers\NotificationController::class, 'update']);
@@ -75,6 +80,7 @@ Route::prefix('internal')
     ->group(function () {
         Route::post('/parser-nodes/heartbeat', \App\Http\Controllers\Internal\ParserNodeController::class)
             ->withoutMiddleware('throttle:api')->middleware('throttle:monitor');
+        Route::post('/sync-runs/{syncRun}/checks', [\App\Http\Controllers\Internal\PilotCheckSyncController::class, 'store']);
         Route::post('/sync-runs/{syncRun}/documents', [\App\Http\Controllers\Internal\FlightDocumentController::class, 'store']);
         Route::post('/sync-runs/start', [SyncRunController::class, 'start']);
         Route::post('/sync-runs/{syncRun}/finish', [SyncRunController::class, 'finish']);

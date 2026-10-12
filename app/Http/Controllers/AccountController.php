@@ -292,6 +292,7 @@ class AccountController extends Controller
             'display_name' => $user->display_name,
             'portal_profile' => $user->portalProfile ? [
                 'full_name' => $user->portalProfile->full_name,
+                'position' => $user->portalProfile->position,
                 'personnel_number' => $user->portalProfile->personnel_number,
                 'has_photo' => $user->portalProfile->photo_base64 !== null,
                 'synced_at' => $user->portalProfile->synced_at,
@@ -319,6 +320,7 @@ class AccountController extends Controller
             ]]),
             'navigation' => array_values(array_filter([
                 'profile',
+                $user->hasReportsAccess() ? 'pilot-checks' : null,
                 in_array('dashboard.view', $permissions, true) ? 'dashboard' : null,
                 in_array('workplan.view', $permissions, true) ? 'workplan' : null,
                 in_array('history.view', $permissions, true) ? 'history' : null,

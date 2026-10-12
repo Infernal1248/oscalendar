@@ -45,6 +45,7 @@ class User extends Authenticatable
     protected $casts = [
         'permissions' => 'array',
         'telegram_notifications_enabled' => 'boolean',
+        'check_notifications_enabled' => 'boolean',
     ];
 
     protected static function booted(): void

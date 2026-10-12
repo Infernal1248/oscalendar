@@ -46,6 +46,21 @@ class ParserTaskScheduler
             });
     }
 
+    public function ensureCheckTasks(string $source, string $portal): void
+    {
+        PortalCredential::where('status', 'active')->where('portal', $portal)
+            ->with('user.roles', 'user.subscriptionPayments')->lazyById(100)->each(function ($credential) use ($source, $portal) {
+                if (! $credential->user?->hasReportsAccess()) return;
+                $task = ParserTask::firstOrCreate(['task_key' => "checks_refresh:{$source}:user:{$credential->user_id}"], [
+                    'user_id' => $credential->user_id, 'source' => $source, 'portal' => $portal,
+                    'task_type' => 'checks_refresh', 'status' => 'scheduled', 'priority' => 75, 'next_run_at' => now(),
+                ]);
+                if (in_array($task->status, ['completed', 'paused'])) {
+                    $task->forceFill(['status' => 'scheduled', 'next_run_at' => now()])->save();
+                }
+            });
+    }
+
     public function scheduleFlightDetails(RosterItem $item, bool $force = false): ?ParserTask
     {
         $eligible = $this->isFlightEligible($item);
@@ -170,7 +185,10 @@ class ParserTaskScheduler
             $attributes['last_error_at'] = null;
             $attributes['last_error_text'] = null;
 
-            if ($task->task_type === 'roster_refresh') {
+            if ($task->task_type === 'checks_refresh') {
+                $attributes['status'] = 'scheduled';
+                $attributes['next_run_at'] = $finishedAt->copy()->addHours(24);
+            } elseif ($task->task_type === 'roster_refresh') {
                 $attributes['status'] = 'scheduled';
                 $attributes['next_run_at'] = $this->nextFromTaskStart(
                     $task,

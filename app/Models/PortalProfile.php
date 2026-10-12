@@ -29,6 +29,7 @@ class PortalProfile extends Model
         }
         if ($profile->personnel_number !== $data['personnel_number']
             || static::normalizeName($profile->full_name ?? '') !== static::normalizeName($data['full_name'])) {
+            $profile->position = null;
             $profile->photo_base64 = null;
             $profile->photo_mime = null;
         }
@@ -36,6 +37,7 @@ class PortalProfile extends Model
             'source' => $source, 'full_name' => $data['full_name'],
             'personnel_number' => $data['personnel_number'], 'synced_at' => $parsedAt,
         ]);
+        if (array_key_exists('position', $data)) $profile->position = $data['position'];
         if (array_key_exists('photo_base64', $data)) {
             $bytes = $data['photo_base64'] ? base64_decode($data['photo_base64'], true) : false;
             $image = $bytes !== false ? @getimagesizefromstring($bytes) : false;

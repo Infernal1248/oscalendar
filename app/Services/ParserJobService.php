@@ -29,9 +29,11 @@ class ParserJobService
                 $options['capabilities'] ?? [],
                 true
             );
+            $supportsChecks = in_array('checks_v1', $options['capabilities'] ?? [], true);
             $now = now();
 
             $this->scheduler->ensureRosterTasks($source, $portal);
+            if ($supportsChecks) $this->scheduler->ensureCheckTasks($source, $portal);
             $this->releaseExpiredTasks($source, $now);
 
             $claimed = $this->claimDueTask(
@@ -41,7 +43,8 @@ class ParserJobService
                 $lockSeconds,
                 $now,
                 $userId,
-                $supportsRosterAcknowledgement
+                $supportsRosterAcknowledgement,
+                $supportsChecks
             );
             if (! $claimed) {
                 return null;
@@ -121,7 +124,8 @@ class ParserJobService
         int $lockSeconds,
         Carbon $now,
         ?int $userId,
-        bool $supportsRosterAcknowledgement
+        bool $supportsRosterAcknowledgement,
+        bool $supportsChecks
     ): ?array {
         $excludedUsers = [];
         $excludedTaskIds = [];
@@ -145,6 +149,7 @@ class ParserJobService
                 ->orderBy('parser_tasks.next_run_at')
                 ->orderBy('parser_tasks.id');
 
+            if (! $supportsChecks) $query->where('parser_tasks.task_type', '!=', 'checks_refresh');
             if (! $supportsRosterAcknowledgement) {
                 $query->where('parser_tasks.task_type', '!=', 'acknowledge_roster_changes');
             }
@@ -246,6 +251,10 @@ class ParserJobService
                     $month->copy()->addMonth()->format('Y-m'),
                 ],
             ];
+        }
+
+        if ($task->task_type === 'checks_refresh') {
+            return $task->user?->hasReportsAccess() ? [] : null;
         }
 
         if ($task->task_type === 'acknowledge_roster_changes') {

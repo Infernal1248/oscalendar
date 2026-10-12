@@ -20,7 +20,8 @@ class SyncResultRequest extends FormRequest
             'parsed_at' => ['nullable', 'date'],
             'sync_run_id' => ['nullable', 'integer', 'exists:sync_runs,id'],
 
-            'portal_profile' => ['nullable', 'array:full_name,personnel_number,photo_base64'],
+            'portal_profile' => ['nullable', 'array:full_name,personnel_number,photo_base64,position'],
+            'portal_profile.position' => ['sometimes', 'nullable', 'string', 'max:255'],
             'portal_profile.full_name' => ['required_with:portal_profile', 'string', 'max:255'],
             'portal_profile.personnel_number' => ['required_with:portal_profile', 'string', 'regex:/^[0-9]{1,64}$/D'],
             'portal_profile.photo_base64' => ['sometimes', 'nullable', 'string', 'max:699052'],
