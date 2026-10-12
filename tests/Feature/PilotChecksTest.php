@@ -63,6 +63,28 @@ class PilotChecksTest extends TestCase
         $this->postJson('/api/pilot-checks', ['title' => 'Проверка', 'due_on' => '2026-11-01'])->assertForbidden();
     }
 
+    public function test_only_requested_portal_checks_are_visible_and_old_extras_never_notify(): void
+    {
+        $user = $this->admin();
+        $user->forceFill(['telegram_notifications_enabled' => true])->save();
+        TelegramAccount::create(['user_id' => $user->id, 'telegram_id' => 123]);
+        config(['services.telegram_bot.token' => 'test']);
+        Http::fake();
+        $titles = ['КВАЛИФ ПРОВЕРКА … [Квалификационная проверка]',
+            'ПППИ … [Подтверждение полномочий ПИ]', 'ПППЭ … [Подтверждение полномочий пилота-экзаменатора]'];
+        foreach ([[$titles[0], 'С9Н'], [$titles[0], 'СУ95'], [$titles[1], 'С9Н'], [$titles[1], 'СУ95'], [$titles[2], '-']] as [$title, $aircraft]) {
+            PilotCheck::create(['user_id' => $user->id, 'origin' => 'portal', 'title' => $title, 'aircraft_type' => $aircraft, 'due_on' => '2027-01-01']);
+        }
+        $unwanted = 'ТП (МВЛ) … [Техника пилотирования (МВЛ)]';
+        PilotCheck::create(['user_id' => $user->id, 'origin' => 'portal', 'title' => $unwanted, 'due_on' => '2026-10-27']);
+        $manual = PilotCheck::create(['user_id' => $user->id, 'origin' => 'manual', 'title' => $unwanted, 'due_on' => '2027-01-01']);
+        $response = $this->actingAs($user)->getJson('/api/pilot-checks')->assertOk()->assertJsonCount(6, 'checks');
+        $this->assertContains($manual->id, array_column($response->json('checks'), 'id'));
+        Artisan::call('checks:notify');
+        Http::assertNothingSent();
+        $this->assertDatabaseCount('pilot_check_deliveries', 0);
+    }
+
     public function test_snapshot_is_idempotent_preserves_manual_and_rejects_wrong_or_expired_runs(): void
     {
         $user = $this->admin();
@@ -71,7 +93,7 @@ class PilotChecksTest extends TestCase
         $run = SyncRun::create(['user_id' => $user->id, 'source' => 'rossiya_edu', 'trigger' => 'scheduler', 'task_type' => 'checks_refresh', 'status' => 'running', 'started_at' => now(), 'lock_expires_at' => now()->addMinutes(10)]);
         $url = '/api/internal/sync-runs/'.$run->id.'/checks';
         $rows = [['title' => 'Квалификационная проверка', 'aircraft_type' => 'СУ95', 'valid_from' => '2025-10-21', 'due_on' => '2026-10-21']];
-        $this->withToken('checks-test')->postJson($url, ['checks' => $rows])->assertOk();
+        $this->withToken('checks-test')->postJson($url, ['checks' => array_merge($rows, [['title' => 'ТП (МВЛ) … [Техника пилотирования (МВЛ)]', 'due_on' => '2026-10-21']])])->assertOk();
         $this->postJson($url, ['checks' => $rows])->assertOk();
         $this->assertDatabaseCount('pilot_checks', 2);
         $this->postJson($url, ['checks' => [['title' => 'bad', 'due_on' => 'nonsense']]])->assertUnprocessable();

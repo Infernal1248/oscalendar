@@ -21,6 +21,7 @@ class NotifyPilotChecks extends Command
             $deadline = microtime(true) + 45;
             foreach (PilotCheck::with('user.roles')->where('is_current', true)->whereNotNull('due_on')
                 ->whereBetween('due_on', [now('UTC')->subDay()->toDateString(), now('UTC')->addDays(16)->toDateString()])->lazyById(100) as $check) {
+                if (! $check->isVisibleCheck()) continue;
                 $user = $check->user;
                 if (! $user?->hasReportsAccess() || ! $user->check_notifications_enabled) continue;
                 $today = now($user->timezone ?: 'UTC')->toDateString();

@@ -17,7 +17,7 @@ class PilotCheckController extends Controller
         $user = $request->user();
         $syncedAt = DB::table('pilot_check_syncs')->where('user_id', $user->id)->value('synced_at');
         return response()->json([
-            'checks' => PilotCheck::where('user_id', $user->id)->where('is_current', true)->orderBy('due_on')->get(),
+            'checks' => PilotCheck::where('user_id', $user->id)->where('is_current', true)->orderBy('due_on')->get()->filter(fn ($check) => $check->isVisibleCheck())->values(),
             'position' => $user->portalProfile?->position,
             'synced_at' => $syncedAt ? \Illuminate\Support\Carbon::parse($syncedAt, 'UTC')->toIso8601String() : null,
             'notifications_enabled' => (bool) $user->check_notifications_enabled,

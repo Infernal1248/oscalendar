@@ -31,6 +31,7 @@ class PilotCheckSyncController extends Controller
             if ($previous && $previous->sync_run_id >= $run->id) return;
             PilotCheck::where('user_id', $user->id)->where('origin', 'portal')->update(['is_current' => false]);
             foreach ($data['checks'] as $row) {
+                if (! PilotCheck::isSupportedPortalTitle($row['title'])) continue;
                 $row = array_replace(array_fill_keys(['title', 'aircraft_type', 'document_number', 'issued_on', 'valid_from', 'due_on', 'portal_status'], null), $row);
                 $identity = $row;
                 unset($identity['portal_status']); // Human-readable countdown changes every day.
