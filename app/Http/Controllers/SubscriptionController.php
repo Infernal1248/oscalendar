@@ -203,7 +203,11 @@ class SubscriptionController extends Controller
             'plans' => collect(SubscriptionPayment::PLANS)->map(fn ($label, $days) => ['days' => $days, 'label' => $label, 'price' => null])->values(),
             'payments' => $user->subscriptionPayments()->select($fields)
                 ->when(! $admin, fn ($query) => $query->where('source', '!=', 'manual'))
-                ->orderByDesc('id')->paginate(20),
+                ->with('order:id,npd_receipt_url')->orderByDesc('id')->paginate(20)
+                ->through(function ($payment) {
+                    $payment->setAttribute('receipt_url', $payment->order?->npd_receipt_url);
+                    return $payment->unsetRelation('order');
+                }),
         ])->header('Cache-Control', 'private, no-store');
     }
 }

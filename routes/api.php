@@ -96,3 +96,8 @@ Route::post('/payments/yookassa/{mode}', [\App\Http\Controllers\CheckoutControll
 Route::post('/telegram/monitor/webhook', \App\Http\Controllers\MonitorWebhookController::class)
     ->withoutMiddleware('throttle:api')->middleware('throttle:monitor');
 Route::get('/calendar/{token}.ics', [CalendarFeedController::class, 'show']);
+
+Route::middleware(\App\Http\Middleware\AuthenticateNpdApi::class)->prefix('npd')->group(function () {
+    Route::get('/payments', [\App\Http\Controllers\NpdController::class, 'index']);
+    Route::post('/receipts', [\App\Http\Controllers\NpdController::class, 'store']);
+});
