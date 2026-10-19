@@ -32,10 +32,10 @@ class SchedulerProcessReuseTest extends TestCase
     {
         $events = [];
         foreach (app(Schedule::class)->events() as $event) {
-            if ($event instanceof CallbackEvent) {
+            if ($event instanceof CallbackEvent && in_array($event->description, ['monitor:check', 'push:send'], true)) {
                 $events[$event->description] = $event;
             } else {
-                // Never launch real notification subprocesses in scheduler tests.
+                // Never send real digests or launch notification subprocesses in tests.
                 $event->skip(fn () => true);
             }
         }

@@ -46,6 +46,7 @@ class SystemMonitor
                 ->groupBy('user_id', 'task_type')->havingRaw('COUNT(*) >= 3')->get(),
             'last_success' => SyncRun::where('status', 'finished')->max('finished_at'),
             'last_roster' => ParserTask::where('task_type', 'roster_refresh')->max('last_success_at'),
+            'notification_backlog' => app(\App\Services\Monitoring\RuntimeHealth::class)->notificationBacklog(),
             // Retry scheduling moves next_run_at; use last success (creation before the first success).
             'stale_roster' => (clone $eligible)->where('task_type', 'roster_refresh')
                 ->whereIn('status', ['scheduled', 'running'])
@@ -55,8 +56,16 @@ class SystemMonitor
 
     public function report(string $command): string
     {
+        if (in_array($command, ['/load', '/summary'], true)) {
+            try {
+                $history = app(\App\Services\Monitoring\MonitorHistory::class);
+                return $command === '/load' ? $history->loadReport() : $history->summary();
+            } catch (\Throwable $exception) {
+                return '🔴 История мониторинга недоступна. Проверьте миграции, подключение к БД и права на storage. Данные до установки мониторинга отсутствуют.';
+            }
+        }
         if (! in_array($command, ['/status', '/parsers', '/queue', '/errors'], true)) {
-            return "OSCalendar Monitor — технический бот администратора.\n\n/status — состояние системы\n/parsers — VM и занятость воркеров\n/queue — очередь и зависшие задачи\n/errors — последние сбои\n\nВсе даты — UTC. Загрузка означает занятые слоты воркеров, не CPU. Бот ничего не изменяет в расписаниях.";
+            return "OSCalendar Monitor — технический бот администратора.\n\n/status — состояние системы\n/parsers — VM и занятость воркеров\n/queue — очередь и зависшие задачи\n/errors — последние сбои\n/load — измеренный CPU и запросы за последний час\n/summary — сводка за последние 12 часов\n\nСводки и нагрузка — по Красноярску (UTC+7); остальные даты — UTC. CPU PHP приложения не равен проценту нагрузки аккаунта Рег.ру. Бот ничего не изменяет в расписаниях.";
         }
         try {
             $s = $this->snapshot();
@@ -94,10 +103,11 @@ class SystemMonitor
             "\nГотовых задач: {$s['due']}\nЗависших блокировок: {$s['stuck']}\nСбоев за 15 минут: {$s['failures']}\nПоследний успешный запуск: ".$this->date($s['last_success']).
             "\nПоследнее успешное обновление расписания: ".$this->date($s['last_roster']).
             "\nПоследняя проверка уведомлений: ".$this->date(Cache::get('monitor:last_check_at')).
+            "\n".app(\App\Services\Monitoring\RuntimeHealth::class)->statusText().
             "\n\nДоступность портала оценивается по результатам синхронизации; прямой проверки портала нет. Если сам хостинг отключится, этот бот также не сможет ответить.";
     }
 
-    public function checkAlerts(MonitorBotClient $bot): void
+    public function checkAlerts(MonitorBotClient $bot): array
     {
         $s = $this->snapshot();
         $conditions = [];
@@ -109,6 +119,7 @@ class SystemMonitor
         $conditions['stuck'] = [$s['stuck'] > 0, 'Запуски с истёкшей блокировкой'];
         $conditions['repeated_errors'] = [$s['repeated']->isNotEmpty(), 'Повторные сбои: ≥3 на пользователя и тип задачи за 15 минут'];
         $conditions['stale_sync'] = [$s['stale_roster'], 'Есть активные пользователи без успешного обновления расписания более '.config('monitor.stale_sync_minutes').' мин.'];
+        $conditions['notifications'] = [$s['notification_backlog'] > 0, 'Telegram-уведомления ожидают отправки более '.config('monitor.notification_delay_minutes').' мин.'];
 
         foreach (config('monitor.admin_ids') as $chatId) {
             foreach ($conditions as $name => [$active, $label]) {
@@ -128,6 +139,7 @@ class SystemMonitor
             }
         }
         Cache::forever('monitor:last_check_at', now()->toDateTimeString());
+        return $s;
     }
 
     private function date($value): string

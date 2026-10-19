@@ -37,6 +37,8 @@ class MonitorSetup extends Command
                 ['command' => 'parsers', 'description' => 'VM и загрузка воркеров'],
                 ['command' => 'queue', 'description' => 'Очередь и зависшие задачи'],
                 ['command' => 'errors', 'description' => 'Последние сбои'],
+                ['command' => 'load', 'description' => 'CPU и запросы за последний час'],
+                ['command' => 'summary', 'description' => 'Сводка за последние 12 часов'],
                 ['command' => 'help', 'description' => 'Справка'],
             ]]);
         } catch (\RuntimeException $exception) {

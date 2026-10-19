@@ -41,7 +41,8 @@ class MonitorWebhookController extends Controller
             return response()->json(['ok' => true]);
         }
         $text = trim($data['message']['text']);
-        $command = [ 'Состояние' => '/status', 'Парсеры' => '/parsers', 'Очередь' => '/queue', 'Ошибки' => '/errors' ][$text]
+        $command = [ 'Состояние' => '/status', 'Парсеры' => '/parsers', 'Очередь' => '/queue', 'Ошибки' => '/errors',
+            'Нагрузка' => '/load', 'Сводка' => '/summary' ][$text]
             ?? explode('@', explode(' ', $text)[0])[0];
         try {
             $bot->send($from, $monitor->report($command));

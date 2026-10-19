@@ -17,7 +17,9 @@ class MonitorCheck extends Command
             $this->line('Monitor is disabled: configure MONITOR_BOT_TOKEN and MONITOR_ADMIN_IDS.');
             return self::SUCCESS;
         }
-        $monitor->checkAlerts($bot);
+        $snapshot = $monitor->checkAlerts($bot);
+        // Reuse the existing minute process: no extra Artisan/cron launch.
+        app(\App\Services\Monitoring\MonitorHistory::class)->capture($snapshot);
         return self::SUCCESS;
     }
 }

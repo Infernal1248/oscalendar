@@ -78,6 +78,8 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::prefix('internal')
     ->middleware('internal.api')
     ->group(function () {
+        Route::get('/monitor/health', \App\Http\Controllers\Internal\MonitorHealthController::class)
+            ->withoutMiddleware('throttle:api')->middleware('throttle:monitor');
         Route::post('/parser-nodes/heartbeat', \App\Http\Controllers\Internal\ParserNodeController::class)
             ->withoutMiddleware('throttle:api')->middleware('throttle:monitor');
         Route::post('/sync-runs/{syncRun}/checks', [\App\Http\Controllers\Internal\PilotCheckSyncController::class, 'store']);

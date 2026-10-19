@@ -4,6 +4,7 @@ use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Http\Request;
 
 define('LARAVEL_START', microtime(true));
+define('OSCALENDAR_CPU_START', function_exists('getrusage') ? (getrusage() ?: null) : null);
 
 /*
 |--------------------------------------------------------------------------

@@ -22,6 +22,9 @@ class Kernel extends ConsoleKernel
                 }
             })->name($command)->everyMinute()->withoutOverlapping(10);
         }
+        // Send reports after routine checks/push so Telegram cannot delay them.
+        $schedule->call(fn () => app(\App\Services\Monitoring\MonitorDigest::class)->sendDue())
+            ->name('monitor:send-digest')->everyMinute()->withoutOverlapping(10);
     }
 
     /**

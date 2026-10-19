@@ -36,7 +36,7 @@ class MonitorBotClient
                 'chat_id' => $chatId,
                 'text' => $chunk,
                 'reply_markup' => [
-                    'keyboard' => [['Состояние', 'Парсеры'], ['Очередь', 'Ошибки']],
+                    'keyboard' => [['Состояние', 'Парсеры'], ['Очередь', 'Ошибки'], ['Нагрузка', 'Сводка']],
                     'resize_keyboard' => true,
                 ],
             ]);

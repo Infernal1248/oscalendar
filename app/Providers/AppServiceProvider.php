@@ -26,6 +26,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot()
     {
-        //
+        if (defined('OSCALENDAR_CPU_START') && config('monitor.metrics_enabled') && config('monitor.token')
+            && ! $this->app->runningUnitTests()) {
+            $metrics = new \App\Services\Monitoring\ProcessMetrics();
+            $events = $this->app->make('events');
+            $events->listen(\Illuminate\Foundation\Http\Events\RequestHandled::class, [$metrics, 'request']);
+            $events->listen(\Illuminate\Console\Events\CommandFinished::class, [$metrics, 'command']);
+            $events->listen(\Illuminate\Log\Events\MessageLogged::class, [$metrics, 'log']);
+            register_shutdown_function([$metrics, 'finish']);
+        }
     }
 }
