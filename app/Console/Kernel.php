@@ -3,6 +3,7 @@
 namespace App\Console;
 
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
+use RuntimeException;
 
 class Kernel extends ConsoleKernel
 {
@@ -11,8 +12,16 @@ class Kernel extends ConsoleKernel
         $schedule->command('checks:notify')->everyFiveMinutes()->withoutOverlapping(10)->runInBackground();
         $schedule->command('flight-documents:prune')->hourly()->withoutOverlapping(60);
         $schedule->command('telegram:notify-roster')->everyMinute()->withoutOverlapping(10)->runInBackground();
-        $schedule->command('monitor:check')->everyMinute()->withoutOverlapping(10);
-        $schedule->command('push:send')->everyMinute()->withoutOverlapping(10);
+        // These tasks already run sequentially. Reuse the scheduler's application
+        // instead of booting a new PHP/Laravel process for each command.
+        foreach (['monitor:check', 'push:send'] as $command) {
+            $schedule->call(function () use ($command) {
+                $exitCode = $this->call($command);
+                if ($exitCode !== 0) {
+                    throw new RuntimeException("Scheduled command [{$command}] failed with exit code [{$exitCode}].");
+                }
+            })->name($command)->everyMinute()->withoutOverlapping(10);
+        }
     }
 
     /**
