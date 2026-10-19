@@ -49,14 +49,29 @@ class ParserTaskScheduler
     public function ensureCheckTasks(string $source, string $portal): void
     {
         PortalCredential::where('status', 'active')->where('portal', $portal)
-            ->with('user.roles', 'user.subscriptionPayments')->lazyById(100)->each(function ($credential) use ($source, $portal) {
-                if (! $credential->user?->hasReportsAccess()) return;
-                $task = ParserTask::firstOrCreate(['task_key' => "checks_refresh:{$source}:user:{$credential->user_id}"], [
-                    'user_id' => $credential->user_id, 'source' => $source, 'portal' => $portal,
-                    'task_type' => 'checks_refresh', 'status' => 'scheduled', 'priority' => 75, 'next_run_at' => now(),
-                ]);
-                if (in_array($task->status, ['completed', 'paused'])) {
-                    $task->forceFill(['status' => 'scheduled', 'next_run_at' => now()])->save();
+            ->select(['id', 'user_id'])->chunkById(100, function ($credentials) use ($source, $portal) {
+                // Most claims find tasks already scheduled or running. Look up
+                // their states in one query before loading users and payments.
+                $taskKey = fn ($credential) => "checks_refresh:{$source}:user:{$credential->user_id}";
+                $statuses = ParserTask::whereIn('task_key', $credentials->map($taskKey))
+                    ->pluck('status', 'task_key');
+                $candidates = $credentials->filter(function ($credential) use ($taskKey, $statuses) {
+                    $key = $taskKey($credential);
+                    return ! $statuses->has($key) || in_array($statuses[$key], ['completed', 'paused']);
+                });
+                $candidates->load('user.roles', 'user.subscriptionPayments');
+
+                foreach ($candidates as $credential) {
+                    if (! $credential->user?->hasReportsAccess()) continue;
+                    // Re-read through firstOrCreate: another claim may have
+                    // created or started the task since the batched lookup.
+                    $task = ParserTask::firstOrCreate(['task_key' => $taskKey($credential)], [
+                        'user_id' => $credential->user_id, 'source' => $source, 'portal' => $portal,
+                        'task_type' => 'checks_refresh', 'status' => 'scheduled', 'priority' => 75, 'next_run_at' => now(),
+                    ]);
+                    if (in_array($task->status, ['completed', 'paused'])) {
+                        $task->forceFill(['status' => 'scheduled', 'next_run_at' => now()])->save();
+                    }
                 }
             });
     }

@@ -503,6 +503,13 @@ supervisor after changing it. Reducing 60 to 30 seconds approximately doubles
 empty polling requests (up to 2,880 per day per idle supervisor), while changing
 the working-plan interval from 60 to 30 minutes can double successful plan syncs.
 
+Check-task discovery batches existing task states before loading users, roles,
+and subscription payments. Already scheduled/running tasks need no per-user
+discovery queries; missing, paused, or completed tasks still undergo the same
+access checks before creation/reactivation. Job execution also retains its access
+check. This optimization needs only a backend code update, with no migration or
+parser restart, and does not change any parsing intervals.
+
 Run `php artisan migrate --force` after deployment to create the task, execution, and roster-change event tables.
 
 Response when no users are ready:

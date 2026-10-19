@@ -121,6 +121,67 @@ class PilotChecksTest extends TestCase
         app(ParserTaskScheduler::class)->completeTask($run);
         $this->assertTrue(ParserTask::find($job['task_id'])->next_run_at->equalTo(now()->addHours(24)));
     }
+
+    public function test_repeated_check_task_discovery_batches_existing_tasks_without_loading_users_or_payments(): void
+    {
+        $password = Crypt::encryptString('test');
+        for ($i = 0; $i < 105; $i++) {
+            $user = $this->admin();
+            PortalCredential::create(['user_id' => $user->id, 'portal' => 'rossiya_edu',
+                'login' => 'test-'.$i, 'password_encrypted' => $password, 'status' => 'active']);
+            ParserTask::create(['task_key' => "checks_refresh:rossiya_edu:user:{$user->id}",
+                'user_id' => $user->id, 'source' => 'rossiya_edu', 'portal' => 'rossiya_edu',
+                'task_type' => 'checks_refresh', 'status' => $i % 2 ? 'running' : 'scheduled',
+                'next_run_at' => now()->addHours(24)]);
+        }
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            app(ParserTaskScheduler::class)->ensureCheckTasks('rossiya_edu', 'rossiya_edu');
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        // Two chunks, each with a credential query and a task-state query.
+        $this->assertCount(4, $queries);
+        foreach ($queries as $query) {
+            $this->assertStringStartsWith('select', strtolower($query['query']));
+            $this->assertStringNotContainsString('subscription_payments', $query['query']);
+            $this->assertStringNotContainsString('"users"', $query['query']);
+        }
+        $this->assertDatabaseCount('parser_tasks', 105);
+        $this->assertSame(53, ParserTask::where('status', 'scheduled')->count());
+        $this->assertSame(52, ParserTask::where('status', 'running')->count());
+        $this->assertSame(105, ParserTask::where('next_run_at', now()->addHours(24))->count());
+    }
+
+    public function test_check_task_discovery_creates_missing_and_restores_paused_tasks_only_with_access(): void
+    {
+        $tasks = [];
+        foreach (['missing', 'paused', 'completed', 'no_access'] as $state) {
+            $user = $state === 'no_access' ? User::create(['status' => 'active', 'role' => 'user']) : $this->admin();
+            PortalCredential::create(['user_id' => $user->id, 'portal' => 'rossiya_edu',
+                'login' => $state, 'password_encrypted' => Crypt::encryptString('test'), 'status' => 'active']);
+            $tasks[$state] = "checks_refresh:rossiya_edu:user:{$user->id}";
+            if ($state !== 'missing') {
+                ParserTask::create(['task_key' => $tasks[$state], 'user_id' => $user->id,
+                    'source' => 'rossiya_edu', 'portal' => 'rossiya_edu', 'task_type' => 'checks_refresh',
+                    'status' => $state === 'no_access' ? 'paused' : $state]);
+            }
+        }
+
+        app(ParserTaskScheduler::class)->ensureCheckTasks('rossiya_edu', 'rossiya_edu');
+
+        foreach (['missing', 'paused', 'completed'] as $state) {
+            $task = ParserTask::where('task_key', $tasks[$state])->sole();
+            $this->assertSame('scheduled', $task->status);
+            $this->assertTrue($task->next_run_at->equalTo(now()));
+        }
+        $this->assertDatabaseHas('parser_tasks', ['task_key' => $tasks['no_access'], 'status' => 'paused']);
+        $this->assertDatabaseCount('parser_tasks', 4);
+    }
+
     public function test_reminders_use_local_dates_retry_failures_and_deduplicate_each_recipient(): void
     {
         config(['services.telegram_bot.token' => 'test']);
