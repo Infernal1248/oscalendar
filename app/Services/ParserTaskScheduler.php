@@ -193,7 +193,7 @@ class ParserTaskScheduler
                 $attributes['next_run_at'] = $this->nextFromTaskStart(
                     $task,
                     $finishedAt,
-                    max(1, (int) config('parser.roster_interval_minutes', 60)) * 60
+                    max(1, (int) config('parser.roster_interval_minutes', 30)) * 60
                 );
             } elseif ($task->task_type === 'flight_details') {
                 $item = $task->rosterItem()->first();

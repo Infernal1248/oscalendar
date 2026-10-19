@@ -56,6 +56,7 @@ class ParserTaskFlowTest extends TestCase
     public function test_roster_result_creates_claimable_flight_details_task(): void
     {
         Carbon::setTestNow('2026-08-07 12:00:00');
+        config(['parser.roster_interval_minutes' => 30]);
         $user = User::query()->create(['display_name' => 'Parser User']);
         PortalCredential::query()->create([
             'user_id' => $user->id,
@@ -98,6 +99,10 @@ class ParserTaskFlowTest extends TestCase
                 'stats' => ['items_found' => 1, 'segments_found' => 0],
             ])
             ->assertOk();
+
+        $rosterTask = ParserTask::findOrFail($rosterJob['task_id']);
+        $this->assertSame('scheduled', $rosterTask->status);
+        $this->assertTrue($rosterTask->next_run_at->equalTo(now()->addMinutes(30)));
 
         $detailJob = $this->claim()->assertOk()->json('job');
         $this->assertSame('flight_details', $detailJob['task_type']);

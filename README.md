@@ -484,10 +484,24 @@ Flight detail cadence is based on the current distance to the flight:
 Configure scheduling and per-user parallelism:
 
 ```env
-PARSER_ROSTER_INTERVAL_MINUTES=60
+PARSER_ROSTER_INTERVAL_MINUTES=30
 PARSER_RETRY_INTERVAL_MINUTES=10
 PARSER_MAX_CONCURRENT_PER_USER=3
 ```
+
+The working plan (`roster_refresh`) repeats every 30 minutes by default, measured
+from the start of the preceding run. Flight details retain the cadence above;
+pilot checks retain their 24-hour cadence. Existing deployments must set
+`PARSER_ROSTER_INTERVAL_MINUTES=30` in the backend `.env` and rebuild cached
+configuration with `php artisan config:cache` if configuration is cached.
+Already scheduled tasks keep their next run time; the new interval applies
+when they next finish successfully. No bulk rescheduling is required.
+
+Parser VM polling is independent of this interval: `SUPERVISOR_SLEEP_SECONDS=30`
+in each VM's environment sets the pause between supervisor cycles. Restart the
+supervisor after changing it. Reducing 60 to 30 seconds approximately doubles
+empty polling requests (up to 2,880 per day per idle supervisor), while changing
+the working-plan interval from 60 to 30 minutes can double successful plan syncs.
 
 Run `php artisan migrate --force` after deployment to create the task, execution, and roster-change event tables.
 
