@@ -115,6 +115,14 @@ class MonitorHistory
         }
         $samples = DB::table('monitor_samples')->where('sampled_at', '>=', $from)->where('sampled_at', '<', $until)
             ->orderBy('sampled_at')->get()->map(fn ($r) => json_decode($r->payload, true));
+        $inventory = app(ParserNodeInventory::class);
+        $samples = $samples->map(function ($sample) use ($inventory) {
+            // Hide currently configured reserves even in older snapshots, and
+            // preserve the reserve role of snapshots collected before a role change.
+            $sample['nodes'] = array_values(array_filter($sample['nodes'], fn ($node) =>
+                ! ($node['reserve'] ?? false) && ! $inventory->isReserve($node['id'])));
+            return $sample;
+        });
         $expected = $hours * 60;
         $lines[] = 'История: '.$samples->count()." / {$expected} минутных снимков. ".($samples->count() >= $expected
             ? 'Есть снимок каждой минуты; короткие события между снимками всё равно возможны.'
@@ -132,9 +140,9 @@ class MonitorHistory
                     if (! $node['online']) $offline[$node['id']] = ($offline[$node['id']] ?? 0) + 1;
                 }
             }
-            $lines[] = $seen ? 'VM в истории: '.count($seen).'.' : '⚠ VM ещё не зарегистрированы.';
+            $lines[] = $seen ? 'Основных VM в истории: '.count($seen).'.' : 'Основных VM в истории нет.';
             foreach ($offline as $id => $count) $lines[] = '⚠ '.$id.': без heartbeat в '.$count.' снимках (~'.$count.' мин. наблюдаемого простоя).';
-            if ($seen && ! $offline) $lines[] = 'На всех снимках зарегистрированные VM были на связи.';
+            if ($seen && ! $offline) $lines[] = 'На всех снимках основные VM были на связи.';
             $utilization = $samples->map(function ($sample) {
                 $online = collect($sample['nodes'])->where('online', true);
                 $slots = $online->sum('max');
@@ -148,7 +156,6 @@ class MonitorHistory
         $lines[] = app(RuntimeHealth::class)->statusText();
         $lines[] = '';
         $lines[] = $this->loadReport($hours, $until);
-        $lines[] = "\nТекущий статус: /status · Парсеры: /parsers. Отсутствие сбоев не гарантирует исправность в пробелах наблюдения.";
         return implode("\n", $lines);
     }
 

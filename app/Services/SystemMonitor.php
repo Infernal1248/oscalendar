@@ -13,19 +13,7 @@ class SystemMonitor
 {
     public function snapshot(): array
     {
-        $registered = DB::table('parser_nodes')->orderBy('node_id')->get()->keyBy('node_id');
-        $ids = config('monitor.node_ids') ?: $registered->keys()->all();
-        $nodes = collect($ids)->map(function ($id) use ($registered) {
-            $node = $registered->get($id);
-            return [
-                'id' => $id,
-                'online' => $node && Carbon::parse($node->last_seen_at)->gte(now()->subSeconds(config('monitor.offline_seconds'))),
-                'seen' => $node?->last_seen_at,
-                'busy' => $node?->busy_workers ?? 0,
-                'max' => $node?->max_workers ?? 0,
-                'version' => $node?->version ?? 'неизвестна',
-            ];
-        });
+        $nodes = app(\App\Services\Monitoring\ParserNodeInventory::class)->snapshot();
         $eligible = ParserTask::whereHas('user', fn ($q) => $q->where('status', 'active'))
             ->whereExists(fn ($q) => $q->selectRaw('1')->from('portal_credentials')
                 ->whereColumn('portal_credentials.user_id', 'parser_tasks.user_id')
@@ -74,10 +62,11 @@ class SystemMonitor
         }
         $header = 'OSCalendar Monitor · '.now()->utc()->format('d.m.Y H:i:s')." UTC\n\n";
         if ($command === '/parsers') {
-            if ($s['nodes']->isEmpty()) {
-                return $header.'VM ещё не зарегистрированы. Включите MONITOR_HEARTBEAT_ENABLED на парсерах.';
+            $visible = $s['nodes']->where('reserve', false);
+            if ($visible->isEmpty()) {
+                return $header.'Основные VM для мониторинга отсутствуют. Проверьте MONITOR_NODE_IDS и heartbeat основных парсеров.';
             }
-            return $header.$s['nodes']->map(fn ($n) =>
+            return $header.$visible->map(fn ($n) =>
                 ($n['online'] ? '🟢 ' : '🔴 ').$n['id'].($n['online'] ? ' — на связи' : ' — нет heartbeat').
                 "\nПоследний сигнал: ".$this->date($n['seen']).
                 "\nВоркеры: ".($n['online'] ? "{$n['busy']} / {$n['max']}" : 'неизвестно (VM не на связи)').
@@ -97,24 +86,25 @@ class SystemMonitor
                 ($repeated ?: 'нет')."\n\nПоследние неуспешные запуски:\n".($errors ?: 'нет').
                 "\n\nПоказаны категории ошибок. Подробности — в логах по ID запуска; пароли и содержимое запросов сюда не отправляются.";
         }
-        $online = $s['nodes']->where('online', true);
-        return $header."Бэкенд и БД отвечают на этот запрос.\nVM на связи: ".$online->count().' / '.$s['nodes']->count().
+        $required = $s['nodes']->where('reserve', false);
+        $online = $required->where('online', true);
+        return $header."Бэкенд и БД отвечают на этот запрос.\nОсновные VM на связи: ".$required->where('online', true)->count().' / '.$required->count().
             "\nЗанято воркеров на VM в сети: ".$online->sum('busy').' / '.$online->sum('max').
             "\nГотовых задач: {$s['due']}\nЗависших блокировок: {$s['stuck']}\nСбоев за 15 минут: {$s['failures']}\nПоследний успешный запуск: ".$this->date($s['last_success']).
             "\nПоследнее успешное обновление расписания: ".$this->date($s['last_roster']).
             "\nПоследняя проверка уведомлений: ".$this->date(Cache::get('monitor:last_check_at')).
-            "\n".app(\App\Services\Monitoring\RuntimeHealth::class)->statusText().
-            "\n\nДоступность портала оценивается по результатам синхронизации; прямой проверки портала нет. Если сам хостинг отключится, этот бот также не сможет ответить.";
+            "\n".app(\App\Services\Monitoring\RuntimeHealth::class)->statusText();
     }
 
     public function checkAlerts(MonitorBotClient $bot): array
     {
         $s = $this->snapshot();
         $conditions = [];
-        foreach ($s['nodes'] as $node) {
+        $required = $s['nodes']->where('reserve', false);
+        foreach ($required as $node) {
             $conditions['node:'.$node['id']] = [! $node['online'], 'Связь с VM '.$node['id']];
         }
-        $conditions['all_nodes'] = [$s['nodes']->isNotEmpty() && $s['nodes']->where('online', true)->isEmpty(), 'Связь со всеми VM'];
+        $conditions['all_nodes'] = [$required->isNotEmpty() && $required->where('online', true)->isEmpty(), 'Связь со всеми основными VM'];
         $conditions['queue'] = [$s['oldest_due'] && Carbon::parse($s['oldest_due'])->lte(now()->subMinutes(config('monitor.queue_delay_minutes'))), 'Задержка очереди более '.config('monitor.queue_delay_minutes').' мин.'];
         $conditions['stuck'] = [$s['stuck'] > 0, 'Запуски с истёкшей блокировкой'];
         $conditions['repeated_errors'] = [$s['repeated']->isNotEmpty(), 'Повторные сбои: ≥3 на пользователя и тип задачи за 15 минут'];
@@ -122,6 +112,9 @@ class SystemMonitor
         $conditions['notifications'] = [$s['notification_backlog'] > 0, 'Telegram-уведомления ожидают отправки более '.config('monitor.notification_delay_minutes').' мин.'];
 
         foreach (config('monitor.admin_ids') as $chatId) {
+            // Reclassification isn't recovery: silently retire an old reserve alarm.
+            $reserveKeys = $s['nodes']->where('reserve', true)->map(fn ($n) => $chatId.':node:'.$n['id'])->all();
+            if ($reserveKeys) DB::table('monitor_alerts')->whereIn('key', $reserveKeys)->where('active', true)->update(['active' => false]);
             foreach ($conditions as $name => [$active, $label]) {
                 $key = $chatId.':'.$name;
                 $previous = DB::table('monitor_alerts')->where('key', $key)->first();

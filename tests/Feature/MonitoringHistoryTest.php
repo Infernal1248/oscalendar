@@ -188,6 +188,49 @@ class MonitoringHistoryTest extends TestCase
         $this->assertTrue($events[$digestIndex]->withoutOverlapping);
     }
 
+    public function test_summary_hides_offline_reserve_in_legacy_snapshots(): void
+    {
+        config(['monitor.reserve_node_ids' => ['parser-reserve-5-mac']]);
+        DB::table('monitor_samples')->insert(['sampled_at' => now()->subMinute(), 'payload' => json_encode([
+            'due' => 0, 'running' => 0, 'stuck' => 0, 'queue_delay' => 0, 'stale_roster' => false,
+            'nodes' => [
+                ['id' => 'vm-1', 'online' => true, 'busy' => 1, 'max' => 5],
+                ['id' => 'parser-reserve-5-mac', 'online' => false, 'busy' => 0, 'max' => 5],
+            ],
+        ])]);
+        $report = app(MonitorHistory::class)->summary();
+        $this->assertStringNotContainsString('parser-reserve-5-mac', $report);
+        $this->assertStringContainsString('Основных VM в истории: 1.', $report);
+        $this->assertStringContainsString('На всех снимках основные VM были на связи.', $report);
+    }
+
+    public function test_new_samples_keep_the_reserve_role_used_when_collected(): void
+    {
+        config(['monitor.reserve_node_ids' => ['parser-reserve-5-mac']]);
+        app(MonitorHistory::class)->capture(app(SystemMonitor::class)->snapshot());
+        $this->travel(1)->minutes();
+        config(['monitor.reserve_node_ids' => []]);
+        $report = app(MonitorHistory::class)->summary();
+        $this->assertStringNotContainsString('parser-reserve-5-mac', $report);
+        $this->assertStringContainsString('⚠ vm-1: без heartbeat', $report);
+    }
+
+    public function test_online_reserve_is_hidden_from_history_counts_and_worker_utilization(): void
+    {
+        config(['monitor.reserve_node_ids' => ['parser-reserve-5-mac']]);
+        DB::table('monitor_samples')->insert(['sampled_at' => now()->subMinute(), 'payload' => json_encode([
+            'due' => 0, 'running' => 0, 'stuck' => 0, 'queue_delay' => 0, 'stale_roster' => false,
+            'nodes' => [
+                ['id' => 'vm-1', 'online' => true, 'busy' => 0, 'max' => 5],
+                ['id' => 'parser-reserve-5-mac', 'reserve' => false, 'online' => true, 'busy' => 5, 'max' => 5],
+            ],
+        ])]);
+        $report = app(MonitorHistory::class)->summary();
+        $this->assertStringNotContainsString('parser-reserve-5-mac', $report);
+        $this->assertStringContainsString('Основных VM в истории: 1.', $report);
+        $this->assertStringContainsString('Занятость слотов парсеров ср./макс.: 0% / 0%', $report);
+    }
+
     public function test_failed_digest_resumes_at_the_unsent_chunk_on_next_tick(): void
     {
         DB::table('monitor_report_deliveries')->insert(['chat_id' => '12345', 'slot_at' => now(),

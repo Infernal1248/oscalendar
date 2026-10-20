@@ -172,6 +172,56 @@ class SystemMonitorTest extends TestCase
         $this->assertDatabaseCount('monitor_alerts', 4);
     }
 
+    public function test_reserve_is_hidden_and_its_absence_does_not_alert_or_send_false_recovery(): void
+    {
+        config(['monitor.node_ids' => ['vm-1'], 'monitor.reserve_node_ids' => ['parser-reserve-5-mac']]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        $this->heartbeat();
+        DB::table('monitor_alerts')->insert(['key' => '12345:node:parser-reserve-5-mac', 'active' => true, 'sent_at' => now()->subHour()]);
+
+        $monitor = app(SystemMonitor::class);
+        $monitor->checkAlerts(app(MonitorBotClient::class));
+
+        Http::assertNothingSent();
+        $this->assertCount(2, $monitor->snapshot()['nodes']);
+        $this->assertStringNotContainsString('parser-reserve-5-mac', $monitor->report('/parsers'));
+        $this->assertStringContainsString('Основные VM на связи: 1 / 1', $monitor->report('/status'));
+        $this->assertStringNotContainsString('Резервные VM', $monitor->report('/status'));
+        $this->assertDatabaseHas('monitor_alerts', ['key' => '12345:node:parser-reserve-5-mac', 'active' => false]);
+        $this->withToken('internal-test')->getJson('/api/internal/monitor/health')->assertOk()
+            ->assertJsonPath('ok', true)->assertJsonPath('offline_nodes', 0)->assertJsonPath('reserve_nodes', 1);
+    }
+
+    public function test_online_reserve_does_not_hide_failure_of_all_primary_nodes(): void
+    {
+        config(['monitor.node_ids' => ['vm-1'], 'monitor.reserve_node_ids' => ['parser-reserve-5-mac']]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        $this->withToken('internal-test')->postJson('/api/internal/parser-nodes/heartbeat', [
+            'node_id' => 'parser-reserve-5-mac', 'source' => 'rossiya_edu', 'version' => 'test',
+            'max_workers' => 5, 'busy_workers' => 2,
+        ])->assertOk();
+
+        $monitor = app(SystemMonitor::class);
+        $monitor->checkAlerts(app(MonitorBotClient::class));
+
+        Http::assertSentCount(2);
+        Http::assertSent(fn ($r) => str_contains($r['text'], 'Связь со всеми основными VM'));
+        $this->assertStringNotContainsString('parser-reserve-5-mac', $monitor->report('/parsers'));
+        $this->assertStringContainsString('Занято воркеров на VM в сети: 0 / 0', $monitor->report('/status'));
+        $this->withToken('internal-test')->getJson('/api/internal/monitor/health')->assertOk()
+            ->assertJsonPath('ok', false)->assertJsonPath('offline_nodes', 1)->assertJsonPath('reserve_online_nodes', 1);
+    }
+
+    public function test_only_reserve_nodes_offline_does_not_trigger_all_nodes_alarm(): void
+    {
+        config(['monitor.node_ids' => [], 'monitor.reserve_node_ids' => ['parser-reserve-5-mac']]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        app(SystemMonitor::class)->checkAlerts(app(MonitorBotClient::class));
+        Http::assertNothingSent();
+        $this->withToken('internal-test')->getJson('/api/internal/monitor/health')->assertOk()
+            ->assertJsonPath('ok', true)->assertJsonPath('required_nodes', 0)->assertJsonPath('offline_nodes', 0);
+    }
+
     public function test_queue_stale_sync_and_errors_use_real_statuses_without_disclosing_raw_errors(): void
     {
         Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);

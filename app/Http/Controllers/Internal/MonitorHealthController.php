@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Internal;
 
 use App\Http\Controllers\Controller;
 use App\Services\Monitoring\RuntimeHealth;
-use Illuminate\Support\Facades\DB;
+use App\Services\Monitoring\ParserNodeInventory;
 
 class MonitorHealthController extends Controller
 {
@@ -12,14 +12,14 @@ class MonitorHealthController extends Controller
     {
         try {
             $health = $runtime->health();
-            $nodes = DB::table('parser_nodes')->pluck('last_seen_at', 'node_id');
-            $ids = config('monitor.node_ids') ?: $nodes->keys()->all();
-            $offline = 0;
-            foreach ($ids as $id) {
-                if (! isset($nodes[$id]) || \Carbon\Carbon::parse($nodes[$id])->lt(now()->subSeconds(config('monitor.offline_seconds')))) $offline++;
-            }
-            return response()->json(array_merge($health, ['nodes' => count($ids), 'offline_nodes' => $offline,
-                'ok' => $health['ok'] && $health['notification_backlog'] === 0 && count($ids) > 0 && $offline === 0]));
+            $nodes = app(ParserNodeInventory::class)->snapshot();
+            $required = $nodes->where('reserve', false);
+            $reserve = $nodes->where('reserve', true);
+            $offline = $required->where('online', false)->count();
+            return response()->json(array_merge($health, ['nodes' => $nodes->count(), 'offline_nodes' => $offline,
+                'required_nodes' => $required->count(), 'reserve_nodes' => $reserve->count(),
+                'reserve_online_nodes' => $reserve->where('online', true)->count(),
+                'ok' => $health['ok'] && $health['notification_backlog'] === 0 && $nodes->isNotEmpty() && $offline === 0]));
         } catch (\Throwable $exception) {
             return response()->json(['ok' => false, 'error' => 'monitoring_unavailable'], 503);
         }
