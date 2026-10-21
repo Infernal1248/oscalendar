@@ -11,7 +11,8 @@ class Kernel extends ConsoleKernel
     {
         $schedule->command('checks:notify')->everyFiveMinutes()->withoutOverlapping(10)->runInBackground();
         $schedule->command('flight-documents:prune')->hourly()->withoutOverlapping(60);
-        $schedule->command('telegram:notify-roster')->everyMinute()->withoutOverlapping(10)->runInBackground();
+        $schedule->command('telegram:notify-roster')->everyMinute()->withoutOverlapping(10)->runInBackground()
+            ->when(fn () => app(\App\Services\Telegram\RosterTelegramQueue::class)->shouldRun());
         // These tasks already run sequentially. Reuse the scheduler's application
         // instead of booting a new PHP/Laravel process for each command.
         foreach (['monitor:check', 'push:send'] as $command) {

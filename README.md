@@ -915,6 +915,21 @@ Deployment: deploy the backend and run `php artisan migrate --force` before depl
 
 Partial parser results no longer perform Telegram HTTP calls. Committed `roster_change_events` act as the durable delivery backlog. After deploying the backend, run `php artisan migrate --force` and keep the once-per-minute Laravel `schedule:run` cron enabled. The scheduler starts `telegram:notify-roster` in the background; no queue daemon is required. For a manual delivery pass use `php artisan telegram:notify-roster` (this sends real notifications). A shared cache lock prevents parallel delivery commands; production must use a shared cache if multiple application servers run the scheduler.
 
+Before spawning `telegram:notify-roster`, the scheduler checks for due work using
+the same query as the delivery command: pending notifications, acknowledgement
+notifications, or unremoved buttons, respecting `telegram_retry_at`. Empty queues
+skip both the PHP worker startup and its subsequent `schedule:finish`. Expiration
+of past periods still runs in the scheduler, including when all notifications have
+already been delivered, so old buttons remain eligible for cleanup. The worker
+keeps its existing locks, recipient deduplication, batch size and retry policy.
+A preflight error logs only the exception class and falls back to launching the
+worker, rather than suppressing delivery or aborting the remaining scheduler tasks.
+New work arriving after the check waits for the next minute, as with the existing
+minute schedule. This optimization requires only the backend code update; no new
+migration, cron entry, environment setting or parser restart is needed. Compare
+the Telegram delivery and background-completion CPU groups in `/load` after a
+full hour. `checks:notify` retains its five-minute background schedule.
+
 The worker sends pending/current roster notifications, acknowledged confirmations and removes obsolete buttons. Failed attempts are retried after 2, 4, 8, 16 and then 30 minutes. Successful recipients and individual keyboard removals are persisted, so other failed recipients do not cause them to be repeated. Telegram's `400 message is not modified` is an already-applied edit, not an error. Historical messages get one cleanup pass before that state is recorded. Disconnected Telegram no longer turns a successful parser save into HTTP 500 or holds its response open. A timeout after Telegram accepted a send still has an ambiguous outcome; this mechanism does not guarantee exactly-once delivery.
 
 Connection-failure logs include elapsed milliseconds and cURL errno when available, without exception URLs containing the bot token. These metrics help distinguish connectivity problems from normal no-op edits; network failures still require checking the backend server's path to Telegram.
