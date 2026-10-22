@@ -43,6 +43,32 @@ class FlightDocumentsTest extends TestCase
             array_merge($data, $extra), ['Accept' => 'application/json']);
     }
 
+    public function test_json_upload_preserves_bytes_and_enforces_validation_and_run_scope(): void
+    {
+        $url = '/api/internal/sync-runs/'.$this->run->id.'/documents';
+        $bytes = self::PDF."\x00\xff";
+        $data = ['flight_number' => 'FV123', 'starts_at' => $this->segment->starts_at->toIso8601String(),
+            'document_type' => 'epz', 'source_url' => $this->segment->download_doc_url,
+            'content_base64' => base64_encode($bytes)];
+        $this->postJson($url, $data)->assertUnauthorized();
+        $this->withToken('document-test')->postJson($url, $data)->assertOk();
+        $document = FlightDocument::sole();
+        $this->assertSame($bytes, Storage::disk('flight_documents')->get($document->storage_path));
+        foreach (['not base64!', base64_encode('<html>login</html>'), base64_encode('%PDF-truncated')] as $invalid) {
+            $this->postJson($url, array_replace($data, ['content_base64' => $invalid]))->assertUnprocessable();
+        }
+        $this->postJson($url, $data + ['failed' => '1'])->assertUnprocessable();
+        $this->postJson($url, array_replace($data, ['content_base64' => base64_encode(str_repeat('a', 20 * 1024 * 1024 + 1))]))->assertUnprocessable();
+        $this->postJson($url, array_replace($data, ['source_url' => 'https://other.example/pdf']))->assertConflict();
+        $this->postJson($url, array_replace($data, ['flight_number' => 'OTHER']))->assertNotFound();
+        unset($data['content_base64']);
+        $this->postJson($url, $data)->assertUnprocessable();
+        $this->postJson($url, $data + ['failed' => '1'])->assertOk();
+        $this->assertSame($bytes, Storage::disk('flight_documents')->get($document->storage_path));
+        $this->run->update(['status' => 'finished']);
+        $this->postJson($url, $data + ['content_base64' => base64_encode($bytes)])->assertConflict();
+    }
+
     public function test_upload_replaces_only_changed_content_and_keeps_previous_copy_on_failure(): void
     {
         $this->upload()->assertOk();
