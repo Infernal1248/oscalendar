@@ -73,7 +73,7 @@ class FlightDocumentsTest extends TestCase
     {
         $this->upload()->assertOk();
         $original = FlightDocument::first();
-        $this->assertTrue($original->expires_at->equalTo($this->segment->rosterItem->ends_at->addDays(7)));
+        $this->assertTrue($original->expires_at->equalTo($this->segment->rosterItem->ends_at->addDays(60)));
         $this->travel(1)->minutes();
         $this->upload()->assertOk();
         $this->assertSame($original->storage_path, $original->fresh()->storage_path);
@@ -111,7 +111,7 @@ class FlightDocumentsTest extends TestCase
         $this->user->update(['status' => 'blocked']);
         $this->getJson($url)->assertForbidden();
         $this->user->update(['status' => 'active']);
-        $this->travel(11)->days();
+        $this->travel(64)->days();
         $this->getJson($url)->assertNotFound();
         $path = FlightDocument::first()->storage_path;
         Artisan::call('flight-documents:prune');
@@ -141,8 +141,8 @@ class FlightDocumentsTest extends TestCase
 
     public function test_expired_files_are_not_downloaded_again(): void
     {
-        $this->segment->rosterItem->update(['ends_at' => now()->subDays(8)]);
-        $this->segment->update(['ends_at' => now()->subDays(8)]);
+        $this->segment->rosterItem->update(['ends_at' => now()->subDays(61)]);
+        $this->segment->update(['ends_at' => now()->subDays(61)]);
         $this->upload()->assertOk();
         $this->assertDatabaseCount('flight_documents', 0);
         $this->assertCount(0, Storage::disk('flight_documents')->allFiles());

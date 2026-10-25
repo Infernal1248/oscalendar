@@ -19,7 +19,7 @@ class FlightDocumentService
         if ($lastLeg && (! $end || $end->lt($lastLeg))) {
             $end = \Illuminate\Support\Carbon::parse($lastLeg);
         }
-        return $end?->copy()->addDays(7);
+        return $end?->copy()->addDays(60);
     }
 
     public function available(FlightDocument $document, FlightSegment $segment): bool

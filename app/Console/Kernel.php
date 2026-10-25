@@ -11,6 +11,8 @@ class Kernel extends ConsoleKernel
     {
         $schedule->command('checks:notify')->everyFiveMinutes()->withoutOverlapping(10)->runInBackground()
             ->when(fn () => app(\App\Services\PilotCheckReminderQueue::class)->shouldRun());
+        $schedule->command('flight-reports:schedule')->hourly()->withoutOverlapping(60);
+        $schedule->command('flight-reports:prune')->daily()->withoutOverlapping(60);
         $schedule->command('flight-documents:prune')->hourly()->withoutOverlapping(60);
         $schedule->command('telegram:notify-roster')->everyMinute()->withoutOverlapping(10)->runInBackground()
             ->when(fn () => app(\App\Services\Telegram\RosterTelegramQueue::class)->shouldRun());

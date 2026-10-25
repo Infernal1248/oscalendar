@@ -929,7 +929,7 @@ Flight detail sync downloads EPZ (the print/download URL, falling back to its vi
 
 `flight_documents` holds source URL, owner, segment, type, private path, hash, size, successful-check/content-change/attempt/error timestamps and expiry. PDFs reside on the private `flight_documents` disk (`storage/app/private/flight-documents`); do **not** expose this directory through the web server. Authenticated `GET /api/workplan/flights/{id}/documents/{epz|ofp}?download=0|1` requires the same workplan permission as flight details and checks ownership, active assignment and expiry. Responses are private/no-store. The UI fetches with its bearer token and previews the returned PDF locally, without tokens in URLs.
 
-Retention is seven days after the later of the roster assignment's end and the last known segment's end. Expiry is recalculated from current dates when serving/pruning, so a rescheduled ring is respected. Unknown end dates prevent caching until an end becomes available. Expired copies cannot be served or uploaded again; metadata and portal URLs remain. `php artisan flight-documents:prune` runs hourly through Laravel's scheduler and removes expired copies and orphaned files older than a day.
+Retention is sixty days after the later of the roster assignment's end and the last known segment's end. Expiry is recalculated from current dates when serving/pruning, so a rescheduled ring is respected. Unknown end dates prevent caching until an end becomes available. Expired copies cannot be served or uploaded again; metadata and portal URLs remain. `php artisan flight-documents:prune` runs hourly through Laravel's scheduler and removes expired copies and orphaned files older than a day.
 
 Deployment: deploy the backend and run `php artisan migrate --force` before deploying the updated parser/frontend. Keep the standard once-per-minute `php artisan schedule:run` cron active. Allow multipart bodies above 20 MiB in the web server and PHP (`upload_max_filesize=20M`, `post_max_size=24M`, nginx `client_max_body_size 24m` or equivalent). Ensure the PHP process can write the private directory. Existing documents populate on the next scheduled flight-detail sync; no bulk backfill is performed. OpenSky buttons retain the portal's own viewing/download behavior (in particular its Content-Disposition response).
 
@@ -1005,3 +1005,34 @@ php artisan npd:defer PAYMENT_ID --hours=0
 
 ### Передача PDF при блокировке multipart на хостинге
 Парсер передаёт PDF как JSON-поле `content_base64`; Laravel строго декодирует его, проверяет лимит 20 MiB, PDF и принадлежность активному запуску. Старый multipart остаётся совместимым на бэкенде. Сначала обновить бэкенд, затем все парсеры и перезапустить их supervisor. Миграция для изменения формата не нужна. Для максимального PDF 20 MiB JSON занимает около 27 MiB: лимит тела запроса сервера/PHP должен быть не менее 28 MiB (например, 32M), запас PHP memory_limit — 256M. Для небольших документов прежних лимитов может быть достаточно.
+
+## Final flight reports and statistics
+
+`/statistics` shows monthly/all-time flight totals, PF takeoffs/landings, aircraft,
+registration, airport and route breakdowns. Data is separate from roster/OPS;
+report ingestion never updates existing flight details. All populated workbook
+cells, their formats/types and merged ranges are retained in `flight_reports.data`;
+compact extracted fields are also retained in `summary` for statistics queries.
+Flight durations count for every matching PIC/CO crew member. PF is matched only by
+portal personnel number. Reports without a matching flight crew identity remain
+visible but do not invent personal flight time. Duty/rest data is stored, not shown.
+
+Deployment order:
+1. Deploy backend and run `php artisan migrate --force` and `php artisan optimize:clear`.
+2. Update parser dependencies and restart every supervisor. Workers advertise
+   `flight_reports_v1`; older workers cannot claim these jobs.
+3. Deploy the front-end build.
+4. Run `php artisan flight-reports:schedule` to queue historical completed roster
+   items with existing flight segments. This also runs hourly via `schedule:run`.
+
+Jobs use the authenticated portal report button, require the row to say
+«Заполнено полностью», and retry/check corrections daily for seven days after task
+creation. They have lower priority than roster/details jobs. Historical reports
+are attempted without an age cutoff; unavailable portal archives cannot be
+reconstructed from planned data. `reports_found` is recorded in sync-run stats.
+
+PDF retention is 60 days after the ring ends. XLSX files are kept on the private
+`flight_reports` disk for 60 days after initial import or changed content, including
+backfill. Unchanged retries do not renew retention. The daily
+`flight-reports:prune` command deletes expired files, retaining parsed data and
+statistics. Downloads are authenticated and scoped to the owning user.

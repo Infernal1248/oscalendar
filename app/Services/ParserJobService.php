@@ -29,6 +29,7 @@ class ParserJobService
                 $options['capabilities'] ?? [],
                 true
             );
+            $supportsReports = in_array('flight_reports_v1', $options['capabilities'] ?? [], true);
             $supportsChecks = in_array('checks_v1', $options['capabilities'] ?? [], true);
             $now = now();
 
@@ -44,7 +45,8 @@ class ParserJobService
                 $now,
                 $userId,
                 $supportsRosterAcknowledgement,
-                $supportsChecks
+                $supportsChecks,
+                $supportsReports
             );
             if (! $claimed) {
                 return null;
@@ -125,7 +127,8 @@ class ParserJobService
         Carbon $now,
         ?int $userId,
         bool $supportsRosterAcknowledgement,
-        bool $supportsChecks
+        bool $supportsChecks,
+        bool $supportsReports
     ): ?array {
         $excludedUsers = [];
         $excludedTaskIds = [];
@@ -149,6 +152,7 @@ class ParserJobService
                 ->orderBy('parser_tasks.next_run_at')
                 ->orderBy('parser_tasks.id');
 
+            if (! $supportsReports) $query->where('parser_tasks.task_type', '!=', 'flight_report');
             if (! $supportsChecks) $query->where('parser_tasks.task_type', '!=', 'checks_refresh');
             if (! $supportsRosterAcknowledgement) {
                 $query->where('parser_tasks.task_type', '!=', 'acknowledge_roster_changes');
@@ -268,7 +272,7 @@ class ParserJobService
             return $task->payload;
         }
 
-        if ($task->task_type !== 'flight_details') {
+        if (! in_array($task->task_type, ['flight_details', 'flight_report'])) {
             return null;
         }
 

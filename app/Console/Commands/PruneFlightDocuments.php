@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Storage;
 class PruneFlightDocuments extends Command
 {
     protected $signature = 'flight-documents:prune';
-    protected $description = 'Remove cached flight PDFs seven days after the end of their ring';
+    protected $description = 'Remove cached flight PDFs sixty days after the end of their ring';
 
     public function handle(FlightDocumentService $service): int
     {

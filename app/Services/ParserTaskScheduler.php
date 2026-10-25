@@ -200,7 +200,12 @@ class ParserTaskScheduler
             $attributes['last_error_at'] = null;
             $attributes['last_error_text'] = null;
 
-            if ($task->task_type === 'checks_refresh') {
+            if ($task->task_type === 'flight_report') {
+                // Check late/corrected reports daily for one week; backfill also gets a week.
+                $until = $task->created_at->copy()->addDays(7);
+                $attributes['status'] = $finishedAt->lt($until) ? 'scheduled' : 'completed';
+                $attributes['next_run_at'] = $finishedAt->lt($until) ? $finishedAt->copy()->addDay() : null;
+            } elseif ($task->task_type === 'checks_refresh') {
                 $attributes['status'] = 'scheduled';
                 $attributes['next_run_at'] = $finishedAt->copy()->addHours(24);
             } elseif ($task->task_type === 'roster_refresh') {
@@ -231,6 +236,15 @@ class ParserTaskScheduler
                 $attributes['refresh_requested'] = false;
             }
         } else {
+            if ($task->task_type === 'flight_report') {
+                $attributes['last_error_at'] = $finishedAt;
+                $attributes['last_error_text'] = $syncRun->error_text;
+                $retry = $finishedAt->lt($task->created_at->copy()->addDays(7));
+                $attributes['status'] = $retry ? 'scheduled' : 'completed';
+                $attributes['next_run_at'] = $retry ? $finishedAt->copy()->addDay() : null;
+                $task->forceFill($attributes)->save();
+                return;
+            }
             $attributes['last_error_at'] = $finishedAt;
             $attributes['last_error_text'] = $syncRun->error_text;
             $item = $task->task_type === 'flight_details' ? $task->rosterItem()->first() : null;
