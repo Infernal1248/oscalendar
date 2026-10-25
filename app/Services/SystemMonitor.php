@@ -53,7 +53,7 @@ class SystemMonitor
             }
         }
         if (! in_array($command, ['/status', '/parsers', '/queue', '/errors'], true)) {
-            return "OSCalendar Monitor — технический бот администратора.\n\n/status — состояние системы\n/parsers — VM и занятость воркеров\n/queue — очередь и зависшие задачи\n/errors — последние сбои\n/load — измеренный CPU и запросы за последний час\n/summary — сводка за последние 12 часов\n\nСводки и нагрузка — по Красноярску (UTC+7); остальные даты — UTC. CPU PHP приложения не равен проценту нагрузки аккаунта Рег.ру. Бот ничего не изменяет в расписаниях.";
+            return "OSCalendar Monitor — технический бот администратора.\n\n/status — состояние системы\n/parsers — VM и занятость воркеров\n/queue — очередь и зависшие задачи\n/errors — причины сбоев и результаты повторов\n/load — измеренный CPU и запросы за последний час\n/summary — сводка за последние 12 часов\n\nОшибки, сводки и нагрузка — по Красноярску (UTC+7); остальные даты — UTC. CPU PHP приложения не равен проценту нагрузки аккаунта Рег.ру. Бот ничего не изменяет в расписаниях.";
         }
         try {
             $s = $this->snapshot();
@@ -78,13 +78,7 @@ class SystemMonitor
                 "\nЗапуски со статусом running: {$s['running']}\nИз них с истёкшей блокировкой: {$s['stuck']}\n\nБудущие задачи не включены в очередь готовых.";
         }
         if ($command === '/errors') {
-            $runs = SyncRun::where('status', 'failed')->orderByDesc('finished_at')->limit(8)->get();
-            $errors = $runs->map(fn ($r) => "#{$r->id} · user_id={$r->user_id} · {$r->task_type}\n".
-                $this->date($r->finished_at).' — '.$this->errorCategory($r->error_text ?? ''))->implode("\n\n");
-            $repeated = $s['repeated']->map(fn ($r) => "user_id={$r->user_id}, {$r->task_type}: {$r->total}")->implode("\n");
-            return $header."Сбоев за 15 минут: {$s['failures']}\nПовторные сбои (≥3 на пользователя и тип задачи):\n".
-                ($repeated ?: 'нет')."\n\nПоследние неуспешные запуски:\n".($errors ?: 'нет').
-                "\n\nПоказаны категории ошибок. Подробности — в логах по ID запуска; пароли и содержимое запросов сюда не отправляются.";
+            return app(\App\Services\Monitoring\SyncFailureReport::class)->render($s);
         }
         $required = $s['nodes']->where('reserve', false);
         $online = $required->where('online', true);
@@ -140,16 +134,4 @@ class SystemMonitor
         return $value ? Carbon::parse($value)->utc()->format('d.m.Y H:i:s').' UTC' : 'нет данных';
     }
 
-    private function errorCategory(string $error): string
-    {
-        $error = mb_strtolower($error);
-        return match (true) {
-            str_contains($error, 'ssl'), str_contains($error, 'certificate') => 'Ошибка TLS/сертификата',
-            str_contains($error, 'timeout'), str_contains($error, 'timed out') => 'Превышено время ожидания',
-            str_contains($error, 'unauthorized'), str_contains($error, '401'), str_contains($error, 'login') => 'Ошибка авторизации',
-            str_contains($error, 'ops') => 'Ошибка получения данных OPS',
-            str_contains($error, 'lock'), str_contains($error, 'lease') => 'Ошибка блокировки задачи',
-            default => 'Сбой синхронизации (подробности в логах)',
-        };
-    }
 }
