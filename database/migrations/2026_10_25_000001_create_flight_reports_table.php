@@ -16,8 +16,10 @@ return new class extends Migration {
             $table->string('content_hash', 64);
             $table->text('source_url');
             $table->string('storage_path')->nullable();
-            $table->timestamp('expires_at');
-            $table->timestamp('last_checked_at');
+            // Values are supplied by the importer. DATETIME avoids MySQL's legacy
+            // implicit TIMESTAMP defaults and ON UPDATE behavior in strict mode.
+            $table->dateTime('expires_at');
+            $table->dateTime('last_checked_at');
             $table->unsignedBigInteger('sync_run_id');
             $table->timestamps();
             $table->unique(['user_id', 'source_key']);
