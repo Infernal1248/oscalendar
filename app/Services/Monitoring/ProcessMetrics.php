@@ -10,6 +10,7 @@ class ProcessMetrics
 {
     private string $group;
     private int $status = 0;
+    private string $addressGroup = 'other';
     private int $errors = 0;
     private int $warnings = 0;
     private int $failures = 0;
@@ -33,6 +34,7 @@ class ProcessMetrics
             default => 'http:other',
         };
         $this->status = $event->response->getStatusCode();
+        if ($this->status >= 400 && $this->status < 500) $this->addressGroup = HttpAddressGroups::classify($request);
     }
 
     public function command(CommandFinished $event): void
@@ -72,6 +74,7 @@ class ProcessMetrics
                 'memory' => memory_get_peak_usage(true),
                 'http_5xx' => $this->status >= 500 ? 1 : 0,
                 'http_4xx' => $this->status >= 400 && $this->status < 500 ? 1 : 0,
+                'http_status' => $this->status, 'http_address_group' => $this->addressGroup,
                 'errors' => $this->errors + (int) $fatal, 'warnings' => $this->warnings, 'failed' => $this->failures,
             ]);
         } catch (\Throwable $exception) {

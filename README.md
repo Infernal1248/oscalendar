@@ -282,6 +282,17 @@ MySQL, веб-сервер, другие сайты, внешние VM и зап
 Метрики предназначены для сравнения одинаковых периодов и стоимости запросов.
 Описание системных счётчиков: [PHP getrusage](https://www.php.net/manual/en/function.getrusage.php).
 
+В `/load` и в разделе нагрузки 12-часовой сводки HTTP 4xx разбиты по кодам
+и фиксированным группам адресов: авторизация, аккаунт, выдача задач, результаты
+парсинга, Telegram, календарь, подписки, неизвестные маршруты, статические файлы
+и т. д. Например, можно отличить `404` на неизвестных адресах от `401` на входе
+или `429` при выдаче задач. Полные URL, параметры, токены и ID в счётчики не
+попадают. Запись использует те же минутные файлы, без дополнительных SQL на
+HTTP-запросах. Старые файлы читаются как раньше; строка «Ответов 4xx с разбивкой:
+X / Y» показывает, для какой части периода есть детализация. Данные до обновления
+по кодам и адресам задним числом не восстанавливаются. В сообщении показываются
+до восьми наиболее частых групп и кодов, остаток подсчитывается отдельно.
+
 Рассылка хранит состояние отдельно для каждого администратора и временного слота.
 При ошибке Telegram повторяется в течение двух часов после слота; подтверждённые
 части длинной сводки повторно не отправляются. Потеря ответа после фактической
@@ -939,7 +950,22 @@ New work arriving after the check waits for the next minute, as with the existin
 minute schedule. This optimization requires only the backend code update; no new
 migration, cron entry, environment setting or parser restart is needed. Compare
 the Telegram delivery and background-completion CPU groups in `/load` after a
-full hour. `checks:notify` retains its five-minute background schedule.
+full hour.
+
+`checks:notify` also uses a preflight on its existing five-minute schedule.
+`PilotCheckReminderQueue` shares the actual sender's eligibility rules: visible
+current checks, extended/admin access, notification preferences, the user's local
+calendar date, 14/10/7/3-day intervals, configured Telegram/push recipients, and
+each recipient's delivery identity. Already sent recipients and retries whose
+15-minute delay has not elapsed do not trigger a worker. Preflight never sends
+notifications or creates delivery rows; the background worker still takes its
+original lock, rechecks date edits/removal, and persists attempts before sending.
+The preflight scan checks a one-second budget between records and falls back to
+the old background launch on a timeout or query error. The worker retains its
+45-second sending/scanning budget. If work arrives after the preflight, it is
+checked on the next five-minute tick. No migration, environment change, parser
+update, or extra cron entry is required; update the backend code and compare
+the reminder and background-completion CPU groups in `/load` after a full hour.
 
 The worker sends pending/current roster notifications, acknowledged confirmations and removes obsolete buttons. Failed attempts are retried after 2, 4, 8, 16 and then 30 minutes. Successful recipients and individual keyboard removals are persisted, so other failed recipients do not cause them to be repeated. Telegram's `400 message is not modified` is an already-applied edit, not an error. Historical messages get one cleanup pass before that state is recorded. Disconnected Telegram no longer turns a successful parser save into HTTP 500 or holds its response open. A timeout after Telegram accepted a send still has an ambiguous outcome; this mechanism does not guarantee exactly-once delivery.
 

@@ -35,6 +35,14 @@ class MetricStore
             foreach (['http_5xx', 'http_4xx', 'errors', 'warnings', 'failed'] as $counter) {
                 $row[$counter] += $measurement[$counter] ?? 0;
             }
+            $status = (int) ($measurement['http_status'] ?? 0);
+            if ($status >= 400 && $status < 500 && ($measurement['http_4xx'] ?? 0)) {
+                $addressGroup = $measurement['http_address_group'] ?? 'other';
+                if (! is_string($addressGroup) || ! array_key_exists($addressGroup, HttpAddressGroups::labels())) $addressGroup = 'other';
+                // Flat numeric counters remain compatible with old minute buckets.
+                $key = 'http_4xx:'.$status.':'.$addressGroup;
+                $row[$key] = ($row[$key] ?? 0) + 1;
+            }
             $bucket[$group] = $row;
             $json = json_encode($bucket, JSON_THROW_ON_ERROR);
             rewind($handle);

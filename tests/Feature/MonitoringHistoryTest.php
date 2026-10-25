@@ -90,6 +90,58 @@ class MonitoringHistoryTest extends TestCase
             'ru_utime.tv_sec' => 1, 'ru_utime.tv_usec' => 500000, 'ru_stime.tv_sec' => 0, 'ru_stime.tv_usec' => 250000]));
     }
 
+    public function test_http_4xx_breakdown_groups_codes_and_paths_without_storing_actual_urls(): void
+    {
+        $until = now()->copy();
+        $this->travelTo($until->copy()->subMinute());
+        foreach ([
+            ['/private-token-scanner?password=secret-value', 404],
+            ['/another-private-path', 404],
+            ['/api/auth/login?token=secret-value', 401],
+            ['/api/internal/parser-jobs/claim', 429],
+            ['/api/account', 422],
+        ] as [$path, $status]) {
+            $metrics = new \App\Services\Monitoring\ProcessMetrics();
+            $metrics->request(new \Illuminate\Foundation\Http\Events\RequestHandled(
+                \Illuminate\Http\Request::create($path), response('private-response', $status)));
+            $metrics->finish();
+        }
+        $this->travelTo($until);
+        $report = app(MonitorHistory::class)->loadReport();
+        $this->assertStringContainsString('HTTP 4xx по кодам: 404 — 2;', $report);
+        $this->assertStringContainsString('Неизвестные адреса (маршрут не найден): 404 — 2.', $report);
+        $this->assertStringContainsString('Авторизация /api/auth/*: 401 — 1.', $report);
+        $this->assertStringContainsString('Выдача задач /api/internal/parser-jobs/claim: 429 — 1.', $report);
+        $this->assertStringContainsString('Аккаунт /api/account*: 422 — 1.', $report);
+        $this->assertStringContainsString('Ответов 4xx с разбивкой: 5 / 5.', $report);
+        $contents = file_get_contents(glob($this->metricsPath.'/*.json')[0]);
+        foreach (['private-token', 'secret-value', 'another-private-path', 'private-response'] as $private) {
+            $this->assertStringNotContainsString($private, $contents);
+            $this->assertStringNotContainsString($private, $report);
+        }
+    }
+
+    public function test_legacy_and_new_http_counters_are_combined_with_explicit_breakdown_coverage(): void
+    {
+        $until = now()->copy();
+        $this->travelTo($until->copy()->subMinute());
+        $old = array_merge($this->measurement(), ['http_4xx' => 1]);
+        app(MetricStore::class)->write($old);
+        $legacyReport = app(MonitorHistory::class)->loadReport(1, $until);
+        $this->assertStringContainsString('Разбивка HTTP 4xx ещё не накоплена', $legacyReport);
+        app(MetricStore::class)->write(array_merge($old, ['http_status' => 403, 'http_address_group' => 'calendar']));
+        // Unknown category input must not become a raw URL or unbounded metric label.
+        app(MetricStore::class)->write(array_merge($old, ['http_status' => 404, 'http_address_group' => '/private-token']));
+        $this->travelTo($until);
+        $report = app(MonitorHistory::class)->loadReport();
+        $this->assertStringContainsString('HTTP 4xx: 3;', $report);
+        $this->assertStringContainsString('Календарная ссылка /api/calendar/*: 403 — 1.', $report);
+        $this->assertStringContainsString('Прочие адреса: 404 — 1.', $report);
+        $this->assertStringContainsString('Ответов 4xx с разбивкой: 2 / 3.', $report);
+        $this->assertStringNotContainsString('private-token', $report);
+        $this->assertStringNotContainsString('private-token', file_get_contents(glob($this->metricsPath.'/*.json')[0]));
+    }
+
     public function test_summary_uses_exactly_twelve_hours_and_discloses_missing_history(): void
     {
         $until = now()->copy();

@@ -86,6 +86,7 @@ class MonitorHistory
         $lines[] = 'HTTP 5xx: '.$groups->sum('http_5xx').'; HTTP 4xx: '.$groups->sum('http_4xx').
             '; ошибок в логах: '.$groups->sum('errors').'; предупреждений: '.$groups->sum('warnings').
             '; неуспешных CLI-вызовов: '.$groups->sum('failed').'.';
+        array_push($lines, ...$this->http4xxBreakdown($groups->all()));
         $lines[] = 'Пик памяти одного PHP-выполнения: '.number_format($groups->max('memory_max') / 1048576, 1).' МиБ (не RAM всего аккаунта).';
         $hostLoads = $samples->map(fn ($s) => $s['host_load'][0] ?? null)->filter(fn ($v) => $v !== null);
         if ($hostLoads->isNotEmpty()) $lines[] = 'Load average среды сервера, ср./макс.: '.number_format($hostLoads->avg(), 2).'/'.number_format($hostLoads->max(), 2).'. Это очередь нагрузки, не CPU% аккаунта; возможны чужие процессы.';
@@ -163,5 +164,41 @@ class MonitorHistory
     {
         return $from->copy()->timezone(config('monitor.timezone'))->format('d.m H:i').'–'.
             $until->copy()->timezone(config('monitor.timezone'))->format('d.m H:i').' Красноярск (UTC+7)';
+    }
+
+    private function http4xxBreakdown(array $groups): array
+    {
+        $total = 0;
+        $byCode = [];
+        $byAddress = [];
+        $labels = HttpAddressGroups::labels();
+        foreach ($groups as $row) {
+            $total += $row['http_4xx'] ?? 0;
+            foreach ($row as $key => $count) {
+                if (! preg_match('/\Ahttp_4xx:(4\d{2}):([a-z-]+)\z/', $key, $match)) continue;
+                $code = $match[1];
+                $address = isset($labels[$match[2]]) ? $match[2] : 'other';
+                $byCode[$code] = ($byCode[$code] ?? 0) + $count;
+                $byAddress[$address][$code] = ($byAddress[$address][$code] ?? 0) + $count;
+            }
+        }
+        if (! $total) return [];
+        if (! $byCode) return ['Разбивка HTTP 4xx ещё не накоплена: она собирается только после обновления.'];
+        $lines = ['HTTP 4xx по кодам: '.$this->statusCounts($byCode), 'HTTP 4xx по группам адресов:'];
+        uasort($byAddress, fn ($a, $b) => array_sum($b) <=> array_sum($a));
+        foreach (array_slice($byAddress, 0, 8, true) as $address => $counts) $lines[] = $labels[$address].': '.$this->statusCounts($counts);
+        if (count($byAddress) > 8) $lines[] = 'Остальные группы: '.array_sum(array_map('array_sum', array_slice($byAddress, 8, null, true))).' ответов.';
+        $detailed = array_sum($byCode);
+        $lines[] = "Ответов 4xx с разбивкой: {$detailed} / {$total}.";
+        return $lines;
+    }
+
+    private function statusCounts(array $counts): string
+    {
+        arsort($counts);
+        $parts = [];
+        foreach (array_slice($counts, 0, 8, true) as $code => $count) $parts[] = $code.' — '.$count;
+        if (count($counts) > 8) $parts[] = 'прочие коды — '.array_sum(array_slice($counts, 8, null, true));
+        return implode('; ', $parts).'.';
     }
 }

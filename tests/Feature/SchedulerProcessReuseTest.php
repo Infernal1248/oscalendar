@@ -32,6 +32,8 @@ class SchedulerProcessReuseTest extends TestCase
     {
         $this->mock(\App\Services\Telegram\RosterTelegramQueue::class)
             ->shouldReceive('shouldRun')->andReturn(false);
+        $this->mock(\App\Services\PilotCheckReminderQueue::class)
+            ->shouldReceive('shouldRun')->andReturn(false);
         $events = [];
         foreach (app(Schedule::class)->events() as $event) {
             if ($event instanceof CallbackEvent && in_array($event->description, ['monitor:check', 'push:send'], true)) {

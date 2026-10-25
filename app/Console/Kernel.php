@@ -9,7 +9,8 @@ class Kernel extends ConsoleKernel
 {
     protected function schedule(\Illuminate\Console\Scheduling\Schedule $schedule)
     {
-        $schedule->command('checks:notify')->everyFiveMinutes()->withoutOverlapping(10)->runInBackground();
+        $schedule->command('checks:notify')->everyFiveMinutes()->withoutOverlapping(10)->runInBackground()
+            ->when(fn () => app(\App\Services\PilotCheckReminderQueue::class)->shouldRun());
         $schedule->command('flight-documents:prune')->hourly()->withoutOverlapping(60);
         $schedule->command('telegram:notify-roster')->everyMinute()->withoutOverlapping(10)->runInBackground()
             ->when(fn () => app(\App\Services\Telegram\RosterTelegramQueue::class)->shouldRun());

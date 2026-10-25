@@ -197,11 +197,14 @@ class PilotChecksTest extends TestCase
         Artisan::call('checks:notify');
         $this->assertDatabaseCount('pilot_check_deliveries', 2);
         $this->assertSame(1, DB::table('pilot_check_deliveries')->whereNotNull('sent_at')->count());
+        $this->assertFalse(app(\App\Services\PilotCheckReminderQueue::class)->shouldRun());
         Artisan::call('checks:notify');
         Http::assertSentCount(1);
         $this->travel(16)->minutes();
+        $this->assertTrue(app(\App\Services\PilotCheckReminderQueue::class)->shouldRun());
         Artisan::call('checks:notify');
         $this->assertSame(2, DB::table('pilot_check_deliveries')->whereNotNull('sent_at')->count());
+        $this->assertFalse(app(\App\Services\PilotCheckReminderQueue::class)->shouldRun());
         Artisan::call('checks:notify');
         Http::assertSentCount(2);
         $check->update(['due_on' => '2026-12-30']);
