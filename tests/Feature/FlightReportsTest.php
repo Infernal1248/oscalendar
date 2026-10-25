@@ -75,6 +75,26 @@ class FlightReportsTest extends TestCase {
         $data=$this->payload(); $data['flight_number']='OTHER'; $data['report']['flight_number']='OTHER'; $this->upload($data)->assertNotFound();
         $this->run->update(['status'=>'finished']); $this->upload()->assertConflict();
     }
+    public function test_statistics_and_report_download_require_extended_subscription(): void {
+        $this->upload()->assertOk();
+        $report = FlightReport::sole();
+        $user = User::create(['status'=>'active','role'=>'user']);
+        $report->update(['user_id'=>$user->id]);
+        $urls = ['/api/statistics', '/api/statistics/reports/'.$report->id, '/api/statistics/reports/'.$report->id.'/file'];
+        $this->actingAs($user);
+        foreach ($urls as $url) $this->getJson($url)->assertForbidden();
+        $payment = \App\Models\SubscriptionPayment::create([
+            'user_id'=>$user->id, 'request_id'=>(string) \Illuminate\Support\Str::uuid(), 'tier'=>'basic',
+            'amount_kopecks'=>100, 'duration_days'=>30, 'paid_at'=>now(), 'starts_at'=>now()->subDay(),
+            'ends_at'=>now()->addDays(30), 'recorded_by'=>$this->user->id, 'grants_access'=>true,
+        ]);
+        foreach ($urls as $url) $this->getJson($url)->assertForbidden();
+        $payment->update(['tier'=>'extended']);
+        foreach ($urls as $url) $this->getJson($url)->assertOk();
+        $payment->update(['ends_at'=>now()->subDay()]);
+        foreach ($urls as $url) $this->getJson($url)->assertForbidden();
+        $this->assertDatabaseCount('flight_reports',1);
+    }
     public function test_only_capable_workers_claim_report_jobs(): void {
         \App\Models\PortalCredential::create(['user_id'=>$this->user->id,'portal'=>'rossiya_edu','login'=>'test',
             'password_encrypted'=>\Illuminate\Support\Facades\Crypt::encryptString('password'),'status'=>'active']);
