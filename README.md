@@ -1044,3 +1044,14 @@ PDF retention is 60 days after the ring ends. XLSX files are kept on the private
 backfill. Unchanged retries do not renew retention. The daily
 `flight-reports:prune` command deletes expired files, retaining parsed data and
 statistics. Downloads are authenticated and scoped to the owning user.
+
+### Refresh historical roster months
+
+Run `php artisan roster:refresh-history --from=2026-08 --to=2026-10` to re-fetch
+an inclusive month range for all active users with active Rossiya portal credentials.
+Each account/month has one reusable, one-off `roster_refresh` task. Running history
+tasks are left untouched; successful tasks complete instead of recurring. Normal
+current/next-month polling remains separate. Existing parsers already support the
+month payload. No records are deleted by the command; normal roster reconciliation
+applies when the portal response arrives. After completion run
+`php artisan flight-reports:schedule` to queue reports for newly discovered flights.

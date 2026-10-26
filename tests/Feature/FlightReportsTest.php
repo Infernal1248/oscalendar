@@ -160,6 +160,35 @@ class FlightReportsTest extends TestCase {
         foreach ($urls as $url) $this->getJson($url)->assertForbidden();
         $this->assertDatabaseCount('flight_reports',1);
     }
+    public function test_history_refresh_queues_each_month_and_finishes_once(): void {
+        \App\Models\PortalCredential::create(['user_id'=>$this->user->id,'portal'=>'rossiya_edu','login'=>'test',
+            'password_encrypted'=>\Illuminate\Support\Facades\Crypt::encryptString('password'),'status'=>'active']);
+        $this->assertSame(1, Artisan::call('roster:refresh-history', ['--from'=>'invalid', '--to'=>'2026-10']));
+        $from = now()->subMonthsNoOverflow(2)->format('Y-m');
+        $options = ['--from'=>$from, '--to'=>now()->format('Y-m')];
+        $this->assertSame(0, Artisan::call('roster:refresh-history', $options));
+        Artisan::call('roster:refresh-history', $options);
+        $this->assertSame(4, ParserTask::where('task_type','roster_refresh')->count());
+        $task = ParserTask::where('task_key', 'like', 'roster_history:%')->orderBy('id')->firstOrFail();
+        $task->update(['priority'=>200]);
+        $job = $this->withToken('report-test')->postJson('/api/internal/parser-jobs/claim', [
+            'source'=>'rossiya_edu', 'portal'=>'rossiya_edu', 'locked_by'=>'history-test',
+            'capabilities'=>['typed_tasks_v1'],
+        ])->assertOk()->json('job');
+        $this->assertSame([$from], $job['task_payload']['months']);
+        $this->assertSame('running', $task->fresh()->status);
+        $before = $task->fresh()->toArray();
+        Artisan::call('roster:refresh-history', $options);
+        $this->assertSame($before, $task->fresh()->toArray());
+        $run = SyncRun::where('parser_task_id', $task->id)->latest('id')->firstOrFail();
+        $run->update(['status'=>'finished', 'finished_at'=>now()]);
+        app(ParserTaskScheduler::class)->completeTask($run);
+        $this->assertSame('completed', $task->fresh()->status);
+        $this->assertNull($task->fresh()->next_run_at);
+        $regular = ParserTask::where('task_key', 'like', 'roster_refresh:%')->sole();
+        $this->assertSame('scheduled', $regular->status);
+        $this->assertEmpty($regular->payload);
+    }
     public function test_only_capable_workers_claim_report_jobs(): void {
         \App\Models\PortalCredential::create(['user_id'=>$this->user->id,'portal'=>'rossiya_edu','login'=>'test',
             'password_encrypted'=>\Illuminate\Support\Facades\Crypt::encryptString('password'),'status'=>'active']);

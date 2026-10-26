@@ -248,6 +248,7 @@ class ParserJobService
     private function taskPayload(ParserTask $task): ?array
     {
         if ($task->task_type === 'roster_refresh') {
+            if ($task->payload['history'] ?? false) return ['months' => $task->payload['months']];
             $month = now()->utc()->startOfMonth();
             return [
                 'months' => [
