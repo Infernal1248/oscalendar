@@ -14,6 +14,8 @@ class FlightStatisticsController extends Controller {
         return ['id' => $report->id, 'flight_number' => $report->flight_number, 'flight_date' => $report->flight_date->toDateString(),
             'assignment_id' => $report->syncRun?->roster_item_id ?? $report->flightSegment?->roster_item_id,
             'engine_start' => $d['times']['Время запуска двигателей'] ?? null,
+            'takeoff_time' => $d['times']['Время взлета (отрыва)'] ?? null,
+            'landing_time' => $d['times']['Время посадки'] ?? null,
             'engine_shutdown' => $d['times']['Время выключения двигателей'] ?? null,
             'delay_minutes' => $this->durationMinutes($d['times']['Задержка'] ?? null),
             'duty_minutes' => ($duty = $this->durationMinutes($d['duty_duration'] ?? null)) !== null && $duty >= 0 ? $duty : null,

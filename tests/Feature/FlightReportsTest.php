@@ -115,7 +115,7 @@ class FlightReportsTest extends TestCase {
     }
     public function test_card_times_signed_deviations_and_assignment_link_survive_missing_segment(): void {
         $data = $this->payload();
-        $data['report']['times'] = ['Время запуска двигателей'=>'05:55:00', 'Время выключения двигателей'=>'07:32:00', 'Задержка'=>'-00:05'];
+        $data['report']['times'] = ['Время запуска двигателей'=>'05:55:00', 'Время взлета (отрыва)'=>'06:11:00', 'Время посадки'=>'07:22:00', 'Время выключения двигателей'=>'07:32:00', 'Задержка'=>'-00:05'];
         $data['report']['duty_duration'] = null;
         $this->upload($data)->assertOk();
         $second = $data;
@@ -130,6 +130,8 @@ class FlightReportsTest extends TestCase {
         $this->assertSame(2, $flights['ФВ6856']['delay_minutes']);
         $this->assertSame('05:55:00', $flights['ФВ6167']['engine_start']);
         $this->assertSame('07:32:00', $flights['ФВ6167']['engine_shutdown']);
+        $this->assertSame('06:11:00', $flights['ФВ6167']['takeoff_time']);
+        $this->assertSame('07:22:00', $flights['ФВ6167']['landing_time']);
         $this->assertNull($flights['ФВ6167']['duty_minutes']);
         $this->assertSame(645, $flights['ФВ6856']['duty_minutes']);
         $this->assertSame($this->run->roster_item_id, $flights['ФВ6167']['assignment_id']);
