@@ -186,6 +186,21 @@ class AccountApiTest extends TestCase
         ]);
     }
 
+    public function test_workplan_includes_old_history_but_excludes_removed_and_other_users(): void
+    {
+        $user = User::create(['status'=>'active', 'role'=>'admin']);
+        $other = User::create(['status'=>'active', 'role'=>'admin']);
+        $attributes = ['user_id'=>$user->id, 'source'=>'rossiya_edu', 'kind'=>'flight_ring',
+            'is_actual'=>true, 'is_removed_from_source'=>false,
+            'starts_at'=>now()->subMonths(5), 'ends_at'=>now()->subMonths(5)->addHours(3)];
+        $old = RosterItem::create($attributes);
+        RosterItem::create(array_replace($attributes, ['is_removed_from_source'=>true]));
+        RosterItem::create(array_replace($attributes, ['is_actual'=>false]));
+        RosterItem::create(array_replace($attributes, ['user_id'=>$other->id]));
+        $this->actingAs($user)->getJson('/api/workplan')->assertOk()->assertJsonCount(1)
+            ->assertJsonPath('0.id', $old->id);
+    }
+
     public function test_workplan_returns_segment_summary_and_loads_full_details_separately(): void
     {
         $user = User::query()->create(['display_name' => 'Crew Member']);

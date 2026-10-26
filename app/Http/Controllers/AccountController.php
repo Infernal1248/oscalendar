@@ -118,7 +118,7 @@ class AccountController extends Controller
                     'aircraft_type', 'board', 'starts_at', 'ends_at',
                 ])
                 ->orderBy('starts_at')])
-            ->whereBetween('starts_at', [now()->subMonths(2), now()->addMonths(12)])
+            ->where('starts_at', '<=', now()->addMonths(12))
             ->orderBy('starts_at')
             ->get()
             ->map(fn (RosterItem $item) => [
