@@ -1102,3 +1102,11 @@ backend deployment: migration `2026_10_26_000003` repairs existing normalized du
 values from stored JSON, without downloading XLSX again or changing retention.
 The idempotent `php artisan flight-reports:repair-duty` command can also be run
 manually. Empty source cells remain empty; formulas are not evaluated.
+
+The individual statistics report dialog lists actual engine start, takeoff, landing
+and shutdown in chronological order, with delay last. Delay codes and descriptions
+appear immediately below the time block, before fuel. The report detail API derives
+`data.delay_reasons` from the preserved workbook cell table headed «Причины задержки»
+with «Код» and «Наименование» columns, including multiple reason rows. Existing
+reports need no re-download, migration or parser update. Deploy backend and frontend
+together; empty reason tables are omitted from the dialog.

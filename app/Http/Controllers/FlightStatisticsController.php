@@ -64,6 +64,8 @@ class FlightStatisticsController extends Controller {
         abort_unless($flightReport->user_id === $request->user()->id, 404);
         $available = $flightReport->expires_at->isFuture() && $flightReport->storage_path
             && \Illuminate\Support\Facades\Storage::disk($flightReport->storage_disk ?? 'flight_reports')->exists($flightReport->storage_path);
-        return response()->json(['data' => $flightReport->data, 'file_available' => (bool) $available]);
+        $data = $flightReport->data;
+        $data['delay_reasons'] = app(\App\Services\FlightReportDelayReasons::class)->extract($data);
+        return response()->json(['data' => $data, 'file_available' => (bool) $available]);
     }
 }

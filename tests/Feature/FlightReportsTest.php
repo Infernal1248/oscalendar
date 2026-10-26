@@ -200,6 +200,23 @@ class FlightReportsTest extends TestCase {
         $this->assertContains('SSJ-100Y100', FlightReport::all()->pluck('summary.aircraft_type')->all());
         $response->assertJsonPath('totals.flights', 3);
     }
+    public function test_modal_recovers_delay_reason_from_preserved_cells_without_resync(): void {
+        $data = $this->payload();
+        $data['report']['sheets'][0]['cells'] = [
+            'A150'=>['value'=>'Причины задержки', 'type'=>'s'],
+            'A151'=>['value'=>'Код', 'type'=>'s'], 'B151'=>['value'=>'Наименование', 'type'=>'s'],
+            'A152'=>['value'=>'56 EC', 'type'=>'s'], 'B152'=>['value'=>'Подготовка грузовой докум.', 'type'=>'s'],
+            'A154'=>['value'=>'Примечание к рейсу', 'type'=>'s'],
+        ];
+        $this->upload($data)->assertOk();
+        $report = FlightReport::sole();
+        $before = $report->toArray();
+        $this->actingAs($this->user)->getJson('/api/statistics/reports/'.$report->id)->assertOk()
+            ->assertJsonPath('data.delay_reasons.0.code', '56 EC')
+            ->assertJsonPath('data.delay_reasons.0.description', 'Подготовка грузовой докум.')
+            ->assertJsonCount(1, 'data.delay_reasons');
+        $this->assertSame($before, $report->fresh()->toArray());
+    }
     public function test_validation_and_lease(): void {
         $data=$this->payload(); $data['content_base64']=base64_encode('<html>login</html>'); $this->upload($data)->assertUnprocessable();
         $data=$this->payload(); $data['report']['flight_number']='OTHER'; $this->upload($data)->assertUnprocessable();
