@@ -89,6 +89,12 @@ class User extends Authenticatable
             ->where('ends_at', '>=', now('UTC')->startOfDay())->exists());
     }
 
+    public function hasStatisticsAccess(): bool
+    {
+        // Temporary rollout: administrators and pilot account 2 only.
+        return ($this->isAdmin() || (int) $this->id === 2) && $this->hasReportsAccess();
+    }
+
     public function subscriptionSummary(): array
     {
         $payments = $this->relationLoaded('subscriptionPayments')
@@ -109,6 +115,7 @@ class User extends Authenticatable
         return [
             'tier' => $this->isAdmin() ? 'extended' : $active?->tier,
             'reports_access' => $this->status === 'active' && ($this->isAdmin() || $active?->tier === 'extended'),
+            'statistics_access' => $this->status === 'active' && ($this->isAdmin() || ((int) $this->id === 2 && $active?->tier === 'extended')),
             'full_access' => $this->status === 'active' && ($this->isAdmin() || $active !== null),
             'status' => $this->isAdmin() ? 'included' : ($active ? 'active' : 'basic'),
             'paid_until' => $until?->toDateString(),
