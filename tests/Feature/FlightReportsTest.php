@@ -178,6 +178,28 @@ class FlightReportsTest extends TestCase {
         $this->assertNull($durations->extract($legacyData));
         $this->assertSame('27:46', $durations->normalize(99960));
     }
+    public function test_aircraft_breakdown_combines_ssj_variants_without_changing_report_types(): void {
+        $this->upload()->assertOk();
+        $original = FlightReport::sole();
+        foreach (['SSJ-100', 'SSJ-100Y100', 'A320'] as $index => $type) {
+            $report = $index === 0 ? $original : $original->replicate();
+            $summary = $original->summary;
+            $summary['aircraft_type'] = $type;
+            $summary['board'] = (string) (89052 + $index);
+            $report->fill(['source_key'=>hash('sha256', $type), 'summary'=>$summary])->save();
+        }
+        $response = $this->actingAs($this->user)->getJson('/api/statistics')->assertOk();
+        $groups = collect($response->json('groups.aircraft_type'))->keyBy('name');
+        $this->assertCount(2, $groups);
+        $this->assertSame(2, $groups['SSJ-100']['flights']);
+        $this->assertSame(142, $groups['SSJ-100']['airborne_minutes']);
+        $this->assertSame(194, $groups['SSJ-100']['flight_minutes']);
+        $this->assertSame(1, $groups['A320']['flights']);
+        $this->assertCount(3, $response->json('groups.board'));
+        $this->assertContains('SSJ-100Y100', array_column($response->json('flights'), 'aircraft_type'));
+        $this->assertContains('SSJ-100Y100', FlightReport::all()->pluck('summary.aircraft_type')->all());
+        $response->assertJsonPath('totals.flights', 3);
+    }
     public function test_validation_and_lease(): void {
         $data=$this->payload(); $data['content_base64']=base64_encode('<html>login</html>'); $this->upload($data)->assertUnprocessable();
         $data=$this->payload(); $data['report']['flight_number']='OTHER'; $this->upload($data)->assertUnprocessable();

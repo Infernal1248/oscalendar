@@ -3,6 +3,10 @@ namespace App\Http\Controllers;
 use App\Models\{FlightReport, PortalProfile};
 use Illuminate\Http\Request;
 class FlightStatisticsController extends Controller {
+    private function aircraftGroup(string $type): string {
+        $normalized = strtoupper(preg_replace('/[\s-]+/u', '', $type));
+        return in_array($normalized, ['SSJ100', 'SSJ100Y100'], true) ? 'SSJ-100' : $type;
+    }
     private function durationMinutes(mixed $value): ?int {
         if (! is_string($value) || ! preg_match('/^([+-]?)(\d+):([0-5]\d)(?::[0-5]\d)?$/', str_replace('−', '-', trim($value)), $parts)) return null;
         return ($parts[1] === '-' ? -1 : 1) * ((int) $parts[2] * 60 + (int) $parts[3]);
@@ -39,7 +43,7 @@ class FlightStatisticsController extends Controller {
             'night_minutes' => $items->sum('night_minutes'), 'takeoffs' => $items->sum('takeoffs'), 'landings' => $items->sum('landings')];
         $groups = [];
         foreach (['aircraft_type', 'board', 'departure', 'arrival'] as $key) {
-            $groups[$key] = $rows->where('counted', true)->groupBy($key)->map(fn ($items, $name) => ['name' => $name ?: 'Не указан'] + $total($items))->values();
+            $groups[$key] = $rows->where('counted', true)->groupBy(fn ($row) => $key === 'aircraft_type' ? $this->aircraftGroup($row[$key]) : $row[$key])->map(fn ($items, $name) => ['name' => $name ?: 'Не указан'] + $total($items))->values();
         }
         $groups['routes'] = $rows->where('counted', true)->groupBy(fn ($r) => $r['departure'].' → '.$r['arrival'])
             ->map(fn ($items, $name) => ['name' => $name] + $total($items))->values();
