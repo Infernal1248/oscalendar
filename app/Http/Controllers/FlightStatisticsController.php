@@ -3,11 +3,20 @@ namespace App\Http\Controllers;
 use App\Models\{FlightReport, PortalProfile};
 use Illuminate\Http\Request;
 class FlightStatisticsController extends Controller {
+    private function durationMinutes(mixed $value): ?int {
+        if (! is_string($value) || ! preg_match('/^([+-]?)(\d+):([0-5]\d)(?::[0-5]\d)?$/', str_replace('−', '-', trim($value)), $parts)) return null;
+        return ($parts[1] === '-' ? -1 : 1) * ((int) $parts[2] * 60 + (int) $parts[3]);
+    }
     private function row(FlightReport $report, ?string $personnel): array {
         $d = $report->summary;
         $crew = collect($d['crew'] ?? [])->first(fn ($c) => $personnel && (string) ($c['personnel_number'] ?? '') === $personnel);
         $counts = $crew && in_array($crew['role'] ?? '', ['PIC', 'CO']);
         return ['id' => $report->id, 'flight_number' => $report->flight_number, 'flight_date' => $report->flight_date->toDateString(),
+            'assignment_id' => $report->syncRun?->roster_item_id ?? $report->flightSegment?->roster_item_id,
+            'engine_start' => $d['times']['Время запуска двигателей'] ?? null,
+            'engine_shutdown' => $d['times']['Время выключения двигателей'] ?? null,
+            'delay_minutes' => $this->durationMinutes($d['times']['Задержка'] ?? null),
+            'duty_minutes' => ($duty = $this->durationMinutes($d['duty_duration'] ?? null)) !== null && $duty >= 0 ? $duty : null,
             'month' => $report->flight_date->format('Y-m'), 'departure' => $d['departure'] ?? '', 'arrival' => $d['arrival'] ?? '',
             'aircraft_type' => $d['aircraft_type'] ?? '', 'board' => $d['board'] ?? '', 'counted' => (bool) $counts,
             'airborne_minutes' => $counts ? $d['airborne_minutes'] : 0, 'flight_minutes' => $counts ? $d['flight_minutes'] : 0,
@@ -19,7 +28,8 @@ class FlightStatisticsController extends Controller {
         abort_unless($request->user()->hasStatisticsAccess(), 403, 'Статистика пока недоступна для этого аккаунта.');
         $request->validate(['month' => ['nullable', 'date_format:Y-m']]);
         $personnel = PortalProfile::find($request->user()->id)?->personnel_number;
-        $all = FlightReport::where('user_id', $request->user()->id)->orderByDesc('flight_date')->get(['id', 'flight_number', 'flight_date', 'summary'])
+        $all = FlightReport::where('user_id', $request->user()->id)->orderByDesc('flight_date')->with(['syncRun:id,roster_item_id', 'flightSegment:id,roster_item_id'])
+            ->get(['id', 'flight_number', 'flight_date', 'summary', 'sync_run_id', 'flight_segment_id'])
             ->map(fn ($r) => $this->row($r, $personnel ? (string) $personnel : null));
         $rows = $request->filled('month') ? $all->where('month', $request->input('month'))->values() : $all;
         $total = fn ($items) => ['flights' => $items->where('counted', true)->count(),

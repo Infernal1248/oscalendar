@@ -113,6 +113,36 @@ class FlightReportsTest extends TestCase {
         $this->assertSame('missing.xlsx', $report->fresh()->storage_path);
         $this->assertSame('flight_reports', $report->fresh()->storage_disk);
     }
+    public function test_card_times_signed_deviations_and_assignment_link_survive_missing_segment(): void {
+        $data = $this->payload();
+        $data['report']['times'] = ['Время запуска двигателей'=>'05:55:00', 'Время выключения двигателей'=>'07:32:00', 'Задержка'=>'-00:05'];
+        $data['report']['duty_duration'] = null;
+        $this->upload($data)->assertOk();
+        $second = $data;
+        $second['flight_number'] = $second['report']['flight_number'] = 'ФВ6856';
+        $second['source_url'] = str_replace('ФВ6167', 'ФВ6856', $data['source_url']);
+        $second['report']['times']['Задержка'] = '+00:02';
+        $second['report']['times']['Время запуска двигателей'] = '13:20:00';
+        $second['report']['duty_duration'] = '10:45:00';
+        $this->upload($second)->assertOk();
+        $flights = collect($this->actingAs($this->user)->getJson('/api/statistics')->assertOk()->json('flights'))->keyBy('flight_number');
+        $this->assertSame(-5, $flights['ФВ6167']['delay_minutes']);
+        $this->assertSame(2, $flights['ФВ6856']['delay_minutes']);
+        $this->assertSame('05:55:00', $flights['ФВ6167']['engine_start']);
+        $this->assertSame('07:32:00', $flights['ФВ6167']['engine_shutdown']);
+        $this->assertNull($flights['ФВ6167']['duty_minutes']);
+        $this->assertSame(645, $flights['ФВ6856']['duty_minutes']);
+        $this->assertSame($this->run->roster_item_id, $flights['ФВ6167']['assignment_id']);
+        $this->assertSame($flights['ФВ6167']['assignment_id'], $flights['ФВ6856']['assignment_id']);
+        $data['report']['times']['Задержка'] = '00:00';
+        $this->upload($data)->assertOk();
+        $data['report']['times']['Задержка'] = 'not a duration';
+        $data['report']['duty_duration'] = '';
+        $this->upload($data)->assertOk();
+        $flights = collect($this->getJson('/api/statistics')->assertOk()->json('flights'))->keyBy('flight_number');
+        $this->assertNull($flights['ФВ6167']['delay_minutes']);
+        $this->assertNull($flights['ФВ6167']['duty_minutes']);
+    }
     public function test_validation_and_lease(): void {
         $data=$this->payload(); $data['content_base64']=base64_encode('<html>login</html>'); $this->upload($data)->assertUnprocessable();
         $data=$this->payload(); $data['report']['flight_number']='OTHER'; $this->upload($data)->assertUnprocessable();

@@ -1081,3 +1081,16 @@ Expiry and parsed statistics are unchanged. Downloads work before, during, and
 after migration. Do not manually move or delete the legacy folders; unreferenced
 files in the old root-level `storage/app/flight-documents` are not migrated blindly.
 No parser or frontend update is required.
+
+### Completed flight assignment cards
+
+The statistics API includes the owning roster assignment, engine start/shutdown,
+signed delay minutes and reported duty duration in each row. Grouping uses the
+report sync run's roster assignment, with its flight segment as a fallback; it does
+not merge unrelated flights by date or number. Historical reports without a segment
+can still share an assignment. Positive delays display red, negative deviations
+green; missing or invalid values are not invented. The assignment card uses the
+last available reported duty duration, never a sum of individual flight durations.
+One dialog shows separate times, fuel, notes and XLSX downloads for each report in
+the assignment. These fields already exist in stored reports; updating backend and
+frontend is sufficient, without a new parser deployment or database migration.
