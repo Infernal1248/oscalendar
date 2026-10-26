@@ -72,8 +72,51 @@ class FlightReportsTest extends TestCase {
     public function test_validation_and_lease(): void {
         $data=$this->payload(); $data['content_base64']=base64_encode('<html>login</html>'); $this->upload($data)->assertUnprocessable();
         $data=$this->payload(); $data['report']['flight_number']='OTHER'; $this->upload($data)->assertUnprocessable();
-        $data=$this->payload(); $data['flight_number']='OTHER'; $data['report']['flight_number']='OTHER'; $this->upload($data)->assertNotFound();
+        $data=$this->payload(); $data['flight_number']='OTHER'; $data['report']['flight_number']='OTHER'; $this->upload($data)->assertUnprocessable();
         $this->run->update(['status'=>'finished']); $this->upload()->assertConflict();
+    }
+    public function test_old_report_without_segment_is_imported_without_changing_roster(): void {
+        $item = RosterItem::findOrFail($this->run->roster_item_id);
+        $item->update(['starts_at'=>now()->subMonths(3), 'ends_at'=>now()->subMonths(3)->addHours(8)]);
+        $data = $this->payload();
+        $data['starts_at'] = $item->starts_at->toIso8601String();
+        $data['report']['flight_date'] = $item->starts_at->toDateString();
+        $this->segment->delete();
+        $before = $item->fresh()->toArray();
+        Artisan::call('flight-reports:schedule');
+        $this->assertSame(1, ParserTask::where('task_type','flight_report')->count());
+        $invalid = $data;
+        $invalid['source_url'] = str_replace('1708557', '999', $data['source_url']);
+        $this->upload($invalid)->assertUnprocessable();
+        $this->upload($data)->assertOk();
+        $this->upload($data)->assertOk();
+        $this->assertDatabaseCount('flight_reports', 1);
+        $this->assertNull(FlightReport::sole()->flight_segment_id);
+        $this->assertDatabaseCount('flight_segments', 0);
+        $this->assertSame($before, $item->fresh()->toArray());
+        $this->actingAs($this->user)->getJson('/api/statistics?month='.$item->starts_at->format('Y-m'))
+            ->assertOk()->assertJsonPath('totals.flights', 1);
+    }
+    public function test_explicit_retry_reopens_old_tasks_but_leaves_running_tasks_alone(): void {
+        Artisan::call('flight-reports:schedule');
+        $task = ParserTask::where('task_type','flight_report')->sole();
+        $task->update(['status'=>'completed', 'next_run_at'=>null]);
+        $this->travel(10)->days();
+        Artisan::call('flight-reports:schedule');
+        $this->assertSame('completed', $task->fresh()->status);
+        Artisan::call('flight-reports:schedule', ['--retry'=>true]);
+        $this->assertSame('scheduled', $task->fresh()->status);
+        $this->run->update(['parser_task_id'=>$task->id, 'status'=>'failed', 'finished_at'=>now(), 'error_text'=>'retryable']);
+        app(ParserTaskScheduler::class)->completeTask($this->run);
+        $this->assertSame('scheduled', $task->fresh()->status);
+        $task->update(['status'=>'running']);
+        $before = $task->fresh()->toArray();
+        Artisan::call('flight-reports:schedule', ['--retry'=>true]);
+        $this->assertSame($before, $task->fresh()->toArray());
+        $this->travel(8)->days();
+        $this->run->update(['finished_at'=>now()]);
+        app(ParserTaskScheduler::class)->completeTask($this->run);
+        $this->assertSame('completed', $task->fresh()->status);
     }
     public function test_statistics_and_report_download_require_extended_subscription(): void {
         $this->upload()->assertOk();

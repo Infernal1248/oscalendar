@@ -1,7 +1,7 @@
 <?php
 namespace App\Http\Controllers\Internal;
 use App\Http\Controllers\Controller;
-use App\Models\{FlightReport, FlightSegment, SyncRun};
+use App\Models\{FlightReport, FlightSegment, RosterItem, SyncRun};
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\{DB, Storage};
@@ -48,10 +48,17 @@ class FlightReportController extends Controller {
         DB::transaction(function () use ($syncRun, $data, $bytes) {
             $run = SyncRun::lockForUpdate()->findOrFail($syncRun->id);
             abort_unless($run->status === 'running' && $run->task_type === 'flight_report' && $run->lock_expires_at?->isFuture(), 409);
+            $item = RosterItem::where('user_id', $run->user_id)->where('source', $run->source)
+                ->lockForUpdate()->findOrFail($run->roster_item_id);
+            abort_unless($item->is_actual && ! $item->is_removed_from_source
+                && $item->ends_at?->isPast(), 409);
+            $startsAt = Carbon::parse($data['starts_at'])->utc();
+            abort_unless($item->starts_at && $startsAt->betweenIncluded(
+                $item->starts_at->copy()->startOfDay(), $item->ends_at->copy()->endOfDay()), 422, 'Flight outside roster dates.');
             $segment = FlightSegment::where('user_id', $run->user_id)->where('source', $run->source)
                 ->where('roster_item_id', $run->roster_item_id)->where('flight_number', $data['flight_number'])
-                ->where('starts_at', Carbon::parse($data['starts_at'])->utc())->lockForUpdate()->firstOrFail();
-            abort_unless($segment->ends_at && $segment->ends_at->isPast(), 409);
+                ->where('starts_at', Carbon::parse($data['starts_at'])->utc())->lockForUpdate()->first();
+            if ($segment) abort_unless($segment->ends_at && $segment->ends_at->isPast(), 409);
             // Use the portal leg identity, independent of file contents or report revisions.
             $url = preg_replace_callback('/[^\x21-\x7E]/u', fn ($m) => rawurlencode($m[0]), $data['source_url']);
             $query = [];
@@ -60,9 +67,9 @@ class FlightReportController extends Controller {
                 $query[rawurldecode($name)] = rawurldecode($value);
             }
             abort_unless(str_contains(parse_url($url, PHP_URL_PATH) ?? '', '/workplan/view_flight_report-1')
-                && ($query['flight_number'] ?? null) === $segment->flight_number
-                && ($query['id_para'] ?? null) == $segment->source_para_id, 422, 'Invalid report link.');
-            $key = hash('sha256', implode('|', [$run->source, $segment->flight_number,
+                && ($query['flight_number'] ?? null) === $data['flight_number']
+                && ($query['id_para'] ?? null) == ($segment?->source_para_id ?? $item->source_external_id), 422, 'Invalid report link.');
+            $key = hash('sha256', implode('|', [$run->source, $data['flight_number'],
                 $data['report']['flight_date'], $query['legnum'] ?? '', $query['departure_airport_id'] ?? '', $query['arrival_airport_id'] ?? '']));
             $report = FlightReport::lockForUpdate()->firstOrNew(['user_id' => $run->user_id, 'source_key' => $key]);
             if ($report->exists && $report->sync_run_id > $run->id) return;
@@ -75,7 +82,7 @@ class FlightReportController extends Controller {
                 $path = $run->user_id.'/'.Str::uuid().'.xlsx';
                 if (! $disk->put($path, $bytes)) throw new \RuntimeException('Could not store report.');
             }
-            $report->fill(['flight_segment_id' => $segment->id, 'flight_number' => $segment->flight_number,
+            $report->fill(['flight_segment_id' => $segment?->id, 'flight_number' => $data['flight_number'],
                 'flight_date' => $data['report']['flight_date'], 'data' => $data['report'], 'summary' => collect($data['report'])->except(['sheets', 'navigation', 'history'])->all(), 'content_hash' => $hash,
                 'source_url' => $data['source_url'], 'storage_path' => $path, 'sync_run_id' => $run->id, 'last_checked_at' => now()]);
             if (! $report->exists || $changed) $report->expires_at = now()->addDays(60);

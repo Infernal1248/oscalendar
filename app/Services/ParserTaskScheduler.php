@@ -202,7 +202,7 @@ class ParserTaskScheduler
 
             if ($task->task_type === 'flight_report') {
                 // Check late/corrected reports daily for one week; backfill also gets a week.
-                $until = $task->created_at->copy()->addDays(7);
+                $until = Carbon::parse($task->payload['report_retry_until'] ?? $task->created_at->copy()->addDays(7));
                 $attributes['status'] = $finishedAt->lt($until) ? 'scheduled' : 'completed';
                 $attributes['next_run_at'] = $finishedAt->lt($until) ? $finishedAt->copy()->addDay() : null;
             } elseif ($task->task_type === 'checks_refresh') {
@@ -239,7 +239,7 @@ class ParserTaskScheduler
             if ($task->task_type === 'flight_report') {
                 $attributes['last_error_at'] = $finishedAt;
                 $attributes['last_error_text'] = $syncRun->error_text;
-                $retry = $finishedAt->lt($task->created_at->copy()->addDays(7));
+                $retry = $finishedAt->lt(Carbon::parse($task->payload['report_retry_until'] ?? $task->created_at->copy()->addDays(7)));
                 $attributes['status'] = $retry ? 'scheduled' : 'completed';
                 $attributes['next_run_at'] = $retry ? $finishedAt->copy()->addDay() : null;
                 $task->forceFill($attributes)->save();

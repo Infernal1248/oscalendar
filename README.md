@@ -1023,7 +1023,12 @@ Deployment order:
    `flight_reports_v1`; older workers cannot claim these jobs.
 3. Deploy the front-end build.
 4. Run `php artisan flight-reports:schedule` to queue historical completed roster
-   items with existing flight segments. This also runs hourly via `schedule:run`.
+   items with a portal detail request, including those without stored flight segments.
+   This also runs hourly via `schedule:run`.
+   Use `php artisan flight-reports:schedule --retry` to requeue existing non-running
+   tasks for all active accounts and reopen their seven-day retry window. Running
+   tasks are left alone. Neither command has a historical date cutoff. Reports
+   without a stored segment are saved independently; roster data is not modified.
 
 Jobs use the authenticated portal report button, require the row to say
 «Заполнено полностью», and retry/check corrections daily for seven days after task
