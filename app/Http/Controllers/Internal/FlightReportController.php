@@ -44,6 +44,7 @@ class FlightReportController extends Controller {
         }
         abort_unless($data['report']['flight_number'] === $data['flight_number']
             && $data['report']['flight_date'] === Carbon::parse($data['starts_at'])->utc()->toDateString(), 422, 'Report identity mismatch.');
+        $data['report']['duty_duration'] = app(\App\Services\FlightReportDutyDuration::class)->extract($data['report']);
         DB::transaction(function () use ($syncRun, $data, $bytes) {
             $run = SyncRun::lockForUpdate()->findOrFail($syncRun->id);
             abort_unless($run->status === 'running' && $run->task_type === 'flight_report' && $run->lock_expires_at?->isFuture(), 409);

@@ -143,6 +143,39 @@ class FlightReportsTest extends TestCase {
         $this->assertNull($flights['ФВ6167']['delay_minutes']);
         $this->assertNull($flights['ФВ6167']['duty_minutes']);
     }
+    public function test_duty_in_merged_g_h_cell_is_recovered_for_existing_and_new_reports(): void {
+        $data = $this->payload();
+        $data['report']['duty_duration'] = null;
+        $data['report']['sheets'][0] = ['merged_ranges'=>['A148:F148', 'G148:H148'], 'cells'=>[
+            'A148'=>['value'=>'Продолжительность полетной смены', 'type'=>'s', 'format'=>'General'],
+            'G148'=>['value'=>'07:46:00', 'type'=>'d', 'format'=>'h:mm'],
+        ]];
+        $this->upload($data)->assertOk();
+        $report = FlightReport::sole();
+        $this->assertSame('7:46', $report->summary['duty_duration']);
+        $hash = $report->content_hash;
+        $path = $report->storage_path;
+        $expiry = $report->expires_at->toIso8601String();
+        $legacyData = $report->data;
+        $legacySummary = $report->summary;
+        $legacyData['duty_duration'] = $legacySummary['duty_duration'] = null;
+        $report->update(['data'=>$legacyData, 'summary'=>$legacySummary]);
+        $this->assertSame(0, Artisan::call('flight-reports:repair-duty'));
+        $this->assertSame(0, Artisan::call('flight-reports:repair-duty'));
+        $report->refresh();
+        $this->assertSame('7:46', $report->data['duty_duration']);
+        $this->assertSame('7:46', $report->summary['duty_duration']);
+        $this->assertSame($hash, $report->content_hash);
+        $this->assertSame($path, $report->storage_path);
+        $this->assertSame($expiry, $report->expires_at->toIso8601String());
+        $this->actingAs($this->user)->getJson('/api/statistics')->assertOk()->assertJsonPath('flights.0.duty_minutes', 466);
+        $legacyData['sheets'][0]['cells']['G148']['value'] = null;
+        $durations = app(\App\Services\FlightReportDutyDuration::class);
+        $this->assertNull($durations->extract($legacyData));
+        $legacyData['sheets'][0]['cells']['G148']['value'] = '=1/3';
+        $this->assertNull($durations->extract($legacyData));
+        $this->assertSame('27:46', $durations->normalize(99960));
+    }
     public function test_validation_and_lease(): void {
         $data=$this->payload(); $data['content_base64']=base64_encode('<html>login</html>'); $this->upload($data)->assertUnprocessable();
         $data=$this->payload(); $data['report']['flight_number']='OTHER'; $this->upload($data)->assertUnprocessable();

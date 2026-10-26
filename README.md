@@ -1091,6 +1091,14 @@ not merge unrelated flights by date or number. Historical reports without a segm
 can still share an assignment. Positive delays display red, negative deviations
 green; missing or invalid values are not invented. The assignment card uses the
 last available reported duty duration, never a sum of individual flight durations.
-One dialog shows separate times, fuel, notes and XLSX downloads for each report in
-the assignment. These fields already exist in stored reports; updating backend and
+Clicking an individual flight opens only that flight’s times, fuel, notes and XLSX download. The assignment card retains the shared duty duration. These fields already exist in stored reports; updating backend and
 frontend is sufficient, without a new parser deployment or database migration.
+
+Duty duration recovery: older parsers read column H, but the export's G:H merged
+cell stores the duty duration in G. The parser now reads the populated cell after
+the row label; the backend also recovers it from preserved workbook cells on new
+uploads, supporting older parser VMs. Run `php artisan migrate --force` after
+backend deployment: migration `2026_10_26_000003` repairs existing normalized duty
+values from stored JSON, without downloading XLSX again or changing retention.
+The idempotent `php artisan flight-reports:repair-duty` command can also be run
+manually. Empty source cells remain empty; formulas are not evaluated.
