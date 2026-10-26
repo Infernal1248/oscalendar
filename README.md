@@ -1029,6 +1029,9 @@ Deployment order:
    tasks for all active accounts and reopen their seven-day retry window. Running
    tasks are left alone. Neither command has a historical date cutoff. Reports
    without a stored segment are saved independently; roster data is not modified.
+   Historical items with a missing end date are also queued once their start is past.
+   The parser checks the actual portal flight row has ended and is fully filled in
+   before importing its report; no end date is invented in the roster.
 
 Jobs use the authenticated portal report button, require the row to say
 «Заполнено полностью», and retry/check corrections daily for seven days after task

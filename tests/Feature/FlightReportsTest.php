@@ -97,6 +97,28 @@ class FlightReportsTest extends TestCase {
         $this->actingAs($this->user)->getJson('/api/statistics?month='.$item->starts_at->format('Y-m'))
             ->assertOk()->assertJsonPath('totals.flights', 1);
     }
+    public function test_history_with_missing_end_date_is_queued_and_imported(): void {
+        $item = RosterItem::findOrFail($this->run->roster_item_id);
+        $item->update(['starts_at'=>now()->subMonths(2), 'ends_at'=>null]);
+        $this->segment->delete();
+        $data = $this->payload();
+        $data['starts_at'] = $item->starts_at->copy()->addDay()->toIso8601String();
+        $data['report']['flight_date'] = $item->starts_at->copy()->addDay()->toDateString();
+        Artisan::call('flight-reports:schedule');
+        $this->assertSame(1, ParserTask::where('task_type','flight_report')->count());
+        $this->upload($data)->assertOk();
+        $this->assertNull($item->fresh()->ends_at);
+        $this->assertDatabaseCount('flight_segments', 0);
+        $future = $data;
+        $future['starts_at'] = now()->addDay()->toIso8601String();
+        $future['report']['flight_date'] = now()->addDay()->toDateString();
+        $this->upload($future)->assertUnprocessable();
+        $item->update(['starts_at'=>now()->addDay()]);
+        ParserTask::query()->delete();
+        Artisan::call('flight-reports:schedule');
+        $this->assertSame(0, ParserTask::where('task_type','flight_report')->count());
+        $this->upload($data)->assertConflict();
+    }
     public function test_explicit_retry_reopens_old_tasks_but_leaves_running_tasks_alone(): void {
         Artisan::call('flight-reports:schedule');
         $task = ParserTask::where('task_type','flight_report')->sole();

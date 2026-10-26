@@ -51,10 +51,10 @@ class FlightReportController extends Controller {
             $item = RosterItem::where('user_id', $run->user_id)->where('source', $run->source)
                 ->lockForUpdate()->findOrFail($run->roster_item_id);
             abort_unless($item->is_actual && ! $item->is_removed_from_source
-                && $item->ends_at?->isPast(), 409);
+                && ($item->ends_at ?? $item->starts_at)?->isPast(), 409);
             $startsAt = Carbon::parse($data['starts_at'])->utc();
             abort_unless($item->starts_at && $startsAt->betweenIncluded(
-                $item->starts_at->copy()->startOfDay(), $item->ends_at->copy()->endOfDay()), 422, 'Flight outside roster dates.');
+                $item->starts_at->copy()->startOfDay(), $item->ends_at?->copy()->endOfDay() ?? now()) && $startsAt->isPast(), 422, 'Flight outside roster dates.');
             $segment = FlightSegment::where('user_id', $run->user_id)->where('source', $run->source)
                 ->where('roster_item_id', $run->roster_item_id)->where('flight_number', $data['flight_number'])
                 ->where('starts_at', Carbon::parse($data['starts_at'])->utc())->lockForUpdate()->first();

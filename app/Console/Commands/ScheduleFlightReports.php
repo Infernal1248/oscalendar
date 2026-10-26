@@ -8,7 +8,10 @@ class ScheduleFlightReports extends Command {
     public function handle(): int {
         $count = 0;
         $retried = 0;
-        RosterItem::where('ends_at', '<', now())->where('is_actual', true)->where('is_removed_from_source', false)
+        RosterItem::where(function ($query) {
+                $query->where('ends_at', '<', now())
+                    ->orWhere(fn ($q) => $q->whereNull('ends_at')->where('starts_at', '<', now()));
+            })->where('is_actual', true)->where('is_removed_from_source', false)
             ->whereNotNull('source_request_raw')->where('source_request_raw', '!=', '')
             ->whereHas('user', fn ($q) => $q->where('status', 'active'))
             ->chunkById(200, function ($items) use (&$count, &$retried) {
