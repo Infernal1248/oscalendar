@@ -21,7 +21,7 @@ class FlightDocumentsTest extends TestCase
         config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:']);
         DB::purge('sqlite');
         Artisan::call('migrate', ['--force' => true]);
-        Storage::fake('flight_documents');
+        Storage::fake('flight_documents'); Storage::fake('flight_files');
         $this->user = User::create(['status' => 'active', 'role' => 'admin']);
         $ring = RosterItem::create(['user_id' => $this->user->id, 'starts_at' => now(), 'ends_at' => now()->addDays(3)]);
         $this->segment = FlightSegment::create(['user_id' => $this->user->id, 'roster_item_id' => $ring->id,
@@ -53,7 +53,7 @@ class FlightDocumentsTest extends TestCase
         $this->postJson($url, $data)->assertUnauthorized();
         $this->withToken('document-test')->postJson($url, $data)->assertOk();
         $document = FlightDocument::sole();
-        $this->assertSame($bytes, Storage::disk('flight_documents')->get($document->storage_path));
+        $this->assertSame($bytes, Storage::disk('flight_files')->get($document->storage_path));
         foreach (['not base64!', base64_encode('<html>login</html>'), base64_encode('%PDF-truncated')] as $invalid) {
             $this->postJson($url, array_replace($data, ['content_base64' => $invalid]))->assertUnprocessable();
         }
@@ -64,7 +64,7 @@ class FlightDocumentsTest extends TestCase
         unset($data['content_base64']);
         $this->postJson($url, $data)->assertUnprocessable();
         $this->postJson($url, $data + ['failed' => '1'])->assertOk();
-        $this->assertSame($bytes, Storage::disk('flight_documents')->get($document->storage_path));
+        $this->assertSame($bytes, Storage::disk('flight_files')->get($document->storage_path));
         $this->run->update(['status' => 'finished']);
         $this->postJson($url, $data + ['content_base64' => base64_encode($bytes)])->assertConflict();
     }
@@ -82,10 +82,11 @@ class FlightDocumentsTest extends TestCase
         $this->upload(null)->assertOk();
         $this->assertNotNull($original->fresh()->last_error_at);
         $this->upload('<html>login</html>')->assertUnprocessable();
-        Storage::disk('flight_documents')->assertExists($original->storage_path);
+        Storage::disk('flight_files')->assertExists($original->storage_path);
         $this->upload(str_replace('1.4', '1.5', self::PDF))->assertOk();
-        Storage::disk('flight_documents')->assertMissing($original->storage_path);
-        $this->assertCount(1, Storage::disk('flight_documents')->allFiles());
+        Storage::disk('flight_files')->assertExists($original->storage_path);
+        $this->assertSame(str_replace('1.4', '1.5', self::PDF), Storage::disk('flight_files')->get($original->storage_path));
+        $this->assertCount(1, Storage::disk('flight_files')->allFiles());
         $this->assertNull($original->fresh()->last_error_at);
     }
 
@@ -94,7 +95,7 @@ class FlightDocumentsTest extends TestCase
         $bytes = self::PDF.str_repeat("\n<!-- portal suffix -->", 4000);
         $this->upload($bytes)->assertOk();
         $document = FlightDocument::first();
-        $this->assertSame($bytes, Storage::disk('flight_documents')->get($document->storage_path));
+        $this->assertSame($bytes, Storage::disk('flight_files')->get($document->storage_path));
         $this->upload("%PDF-1.4\ntruncated")->assertUnprocessable();
     }
 
@@ -115,7 +116,7 @@ class FlightDocumentsTest extends TestCase
         $this->getJson($url)->assertNotFound();
         $path = FlightDocument::first()->storage_path;
         Artisan::call('flight-documents:prune');
-        Storage::disk('flight_documents')->assertMissing($path);
+        Storage::disk('flight_files')->assertMissing($path);
         $this->assertNull(FlightDocument::first()->storage_path);
         $this->assertSame('https://portal.example/epz.pdf', FlightDocument::first()->source_url);
         $this->segment->update(['download_doc_url' => null]);
@@ -134,7 +135,7 @@ class FlightDocumentsTest extends TestCase
         $this->travel(11)->days();
         Artisan::call('flight-documents:prune');
         $doc = FlightDocument::first();
-        Storage::disk('flight_documents')->assertExists($doc->storage_path);
+        Storage::disk('flight_files')->assertExists($doc->storage_path);
         $this->assertTrue(app(FlightDocumentService::class)->available($doc, $this->segment->fresh()));
         $this->upload()->assertConflict(); // The parser lease expired.
     }
@@ -145,6 +146,6 @@ class FlightDocumentsTest extends TestCase
         $this->segment->update(['ends_at' => now()->subDays(61)]);
         $this->upload()->assertOk();
         $this->assertDatabaseCount('flight_documents', 0);
-        $this->assertCount(0, Storage::disk('flight_documents')->allFiles());
+        $this->assertCount(0, Storage::disk('flight_files')->allFiles());
     }
 }

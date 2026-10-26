@@ -9,7 +9,7 @@ class FlightReportsTest extends TestCase {
     protected function setUp(): void {
         parent::setUp();
         config(['database.default'=>'sqlite','database.connections.sqlite.database'=>':memory:']); DB::purge('sqlite');
-        Artisan::call('migrate',['--force'=>true]); Storage::fake('flight_reports');
+        Artisan::call('migrate',['--force'=>true]); Storage::fake('flight_reports'); Storage::fake('flight_files');
         $this->user=User::create(['status'=>'active','role'=>'admin']);
         PortalProfile::create(['user_id'=>$this->user->id,'source'=>'rossiya_edu','full_name'=>'Test Pilot','personnel_number'=>'456','synced_at'=>now()]);
         $item=RosterItem::create(['user_id'=>$this->user->id,'source'=>'rossiya_edu','source_external_id'=>'1708557',
@@ -55,7 +55,7 @@ class FlightReportsTest extends TestCase {
         $this->getJson('/api/statistics/reports/'.$report->id.'/file')->assertNotFound();
         $this->actingAs($this->user)->get('/api/statistics/reports/'.$report->id.'/file')->assertOk();
         $this->travel(61)->days(); Artisan::call('flight-reports:prune');
-        Storage::disk('flight_reports')->assertMissing($path);
+        Storage::disk('flight_files')->assertMissing($path);
         $this->assertNull($report->fresh()->storage_path);
         $this->getJson('/api/statistics/reports/'.$report->id.'/file')->assertNotFound();
         $this->assertSame(71,$report->fresh()->data['airborne_minutes']);
@@ -67,7 +67,51 @@ class FlightReportsTest extends TestCase {
         $this->assertDatabaseCount('flight_reports',1);
         $this->assertSame($before,$this->segment->fresh()->toArray());
         $this->actingAs($this->user)->getJson('/api/statistics')->assertJsonPath('totals.airborne_minutes',80);
-        $this->assertCount(1,Storage::disk('flight_reports')->allFiles());
+        $this->assertCount(1,Storage::disk('flight_files')->allFiles());
+    }
+    public function test_existing_files_move_together_and_prune_independently(): void {
+        Storage::fake('flight_documents');
+        $this->upload()->assertOk();
+        $report = FlightReport::sole();
+        $bytes = Storage::disk('flight_files')->get($report->storage_path);
+        Storage::disk('flight_files')->delete($report->storage_path);
+        Storage::disk('flight_reports')->put('legacy.xlsx', $bytes);
+        $report->update(['storage_disk'=>'flight_reports', 'storage_path'=>'legacy.xlsx']);
+        $expiry = $report->expires_at->toIso8601String();
+        foreach (['ofp', 'epz'] as $type) {
+            $pdf = '%PDF-'.$type;
+            Storage::disk('flight_documents')->put($type.'.pdf', $pdf);
+            \App\Models\FlightDocument::create(['user_id'=>$this->user->id, 'flight_segment_id'=>$this->segment->id,
+                'document_type'=>$type, 'source_url'=>'https://portal.example/'.$type.'.pdf', 'storage_path'=>$type.'.pdf', 'content_hash'=>hash('sha256', $pdf),
+                'expires_at'=>now()->addDays(60)]);
+        }
+        $this->actingAs($this->user)->get('/api/statistics/reports/'.$report->id.'/file')->assertOk();
+        $this->assertSame(0, Artisan::call('flight-files:organize'));
+        $this->assertSame(0, Artisan::call('flight-files:organize'));
+        $folder = $this->user->id.'/'.$this->segment->id;
+        foreach (['ofp.pdf', 'epz.pdf', 'report.xlsx'] as $file) Storage::disk('flight_files')->assertExists($folder.'/'.$file);
+        $this->assertSame($bytes, Storage::disk('flight_files')->get($folder.'/report.xlsx'));
+        $this->assertSame($expiry, $report->fresh()->expires_at->toIso8601String());
+        $this->assertEmpty(Storage::disk('flight_documents')->allFiles());
+        $this->assertEmpty(Storage::disk('flight_reports')->allFiles());
+        $this->get('/api/statistics/reports/'.$report->id.'/file')->assertOk();
+        $report->update(['expires_at'=>now()->subDay()]);
+        Storage::disk('flight_files')->put('monitor-metrics/keep.json', '{}');
+        Artisan::call('flight-reports:prune');
+        Artisan::call('flight-documents:prune');
+        Storage::disk('flight_files')->assertMissing($folder.'/report.xlsx');
+        Storage::disk('flight_files')->assertExists($folder.'/ofp.pdf');
+        Storage::disk('flight_files')->assertExists($folder.'/epz.pdf');
+        Storage::disk('flight_files')->assertExists('monitor-metrics/keep.json');
+        $this->assertNotEmpty($report->fresh()->data);
+    }
+    public function test_move_missing_source_keeps_database_reference(): void {
+        $this->upload()->assertOk();
+        $report = FlightReport::sole();
+        $report->update(['storage_disk'=>'flight_reports', 'storage_path'=>'missing.xlsx']);
+        $this->assertSame(1, Artisan::call('flight-files:organize'));
+        $this->assertSame('missing.xlsx', $report->fresh()->storage_path);
+        $this->assertSame('flight_reports', $report->fresh()->storage_disk);
     }
     public function test_validation_and_lease(): void {
         $data=$this->payload(); $data['content_base64']=base64_encode('<html>login</html>'); $this->upload($data)->assertUnprocessable();

@@ -194,7 +194,7 @@ class AccountController extends Controller
             ->where('user_id', $request->user()->id)->where('document_type', $type)->firstOrFail();
         abort_unless($service->available($document, $segment), 404, 'Локальная копия недоступна. Откройте документ в OpenSky.');
         $name = strtoupper($type).'-'.$segment->id.'.pdf';
-        return response()->file(\Illuminate\Support\Facades\Storage::disk('flight_documents')->path($document->storage_path), [
+        return response()->file(\Illuminate\Support\Facades\Storage::disk($document->storage_disk ?? 'flight_documents')->path($document->storage_path), [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => ($request->boolean('download') ? 'attachment' : 'inline').'; filename="'.$name.'"',
             'Cache-Control' => 'private, no-store', 'X-Content-Type-Options' => 'nosniff',

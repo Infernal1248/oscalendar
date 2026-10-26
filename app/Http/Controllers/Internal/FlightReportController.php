@@ -5,7 +5,6 @@ use App\Models\{FlightReport, FlightSegment, RosterItem, SyncRun};
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\{DB, Storage};
-use Illuminate\Support\Str;
 class FlightReportController extends Controller {
     public function store(Request $request, SyncRun $syncRun) {
         $data = $request->validate([
@@ -74,20 +73,21 @@ class FlightReportController extends Controller {
             $report = FlightReport::lockForUpdate()->firstOrNew(['user_id' => $run->user_id, 'source_key' => $key]);
             if ($report->exists && $report->sync_run_id > $run->id) return;
             $hash = hash('sha256', $bytes);
-            $disk = Storage::disk('flight_reports');
-            $old = $report->storage_path;
+            $disk = Storage::disk($report->storage_disk ?? 'flight_reports');
             $changed = $report->content_hash !== $hash;
-            $path = $old;
-            if ($changed || (! $old && ! $report->exists) || ($old && ! $disk->exists($old))) {
-                $path = $run->user_id.'/'.Str::uuid().'.xlsx';
-                if (! $disk->put($path, $bytes)) throw new \RuntimeException('Could not store report.');
-            }
+            $write = $changed || ! $report->exists
+                || ($report->storage_path && (! $disk->exists($report->storage_path) || $report->storage_disk !== 'flight_files'));
             $report->fill(['flight_segment_id' => $segment?->id, 'flight_number' => $data['flight_number'],
-                'flight_date' => $data['report']['flight_date'], 'data' => $data['report'], 'summary' => collect($data['report'])->except(['sheets', 'navigation', 'history'])->all(), 'content_hash' => $hash,
-                'source_url' => $data['source_url'], 'storage_path' => $path, 'sync_run_id' => $run->id, 'last_checked_at' => now()]);
+                'flight_date' => $data['report']['flight_date'], 'data' => $data['report'],
+                'summary' => collect($data['report'])->except(['sheets', 'navigation', 'history'])->all(),
+                'content_hash' => $hash, 'source_url' => $data['source_url'],
+                'sync_run_id' => $run->id, 'last_checked_at' => now()]);
             if (! $report->exists || $changed) $report->expires_at = now()->addDays(60);
-            try { $report->save(); } catch (\Throwable $e) { if ($path !== $old) $disk->delete($path); throw $e; }
-            if ($old && $path !== $old) DB::afterCommit(fn () => $disk->delete($old));
+            $report->save(); // Allocate an ID for reports whose historical segment is absent.
+            $files = app(\App\Services\FlightFileStorage::class);
+            if ($report->storage_path && $report->storage_disk === 'flight_files'
+                && $report->storage_path !== $files->path($report)) $write = true;
+            if ($write) $files->write($report, $bytes);
         });
         return response()->json(['ok' => true]);
     }

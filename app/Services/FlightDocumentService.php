@@ -5,7 +5,6 @@ namespace App\Services;
 use App\Models\FlightDocument;
 use App\Models\FlightSegment;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 
 class FlightDocumentService
 {
@@ -26,7 +25,7 @@ class FlightDocumentService
     {
         $expires = $this->expiry($segment);
         return $expires && $expires->isFuture() && $document->storage_path
-            && Storage::disk('flight_documents')->exists($document->storage_path);
+            && Storage::disk($document->storage_disk ?? 'flight_documents')->exists($document->storage_path);
     }
 
     public function metadata(FlightSegment $segment): array
@@ -62,30 +61,15 @@ class FlightDocumentService
             $document->save();
             return;
         }
-        $disk = Storage::disk('flight_documents');
-        $oldPath = $document->storage_path;
-        $newPath = null;
+        $disk = Storage::disk($document->storage_disk ?? 'flight_documents');
         $hash = hash('sha256', $bytes);
-        if ($hash !== $document->content_hash || ! $oldPath || ! $disk->exists($oldPath)) {
-            $newPath = $segment->user_id.'/'.$segment->id.'/'.Str::uuid().'.pdf';
-            if (! $disk->put($newPath, $bytes)) {
-                throw new \RuntimeException('Could not store flight document.');
-            }
-            $document->storage_path = $newPath;
-            if ($hash !== $document->content_hash) {
-                $document->content_updated_at = now();
-            }
-        }
+        $changed = $hash !== $document->content_hash;
+        $write = $changed || ! $document->storage_path || ! $disk->exists($document->storage_path)
+            || $document->storage_disk !== 'flight_files';
+        if ($changed) $document->content_updated_at = now();
         $document->fill(['content_hash' => $hash, 'size' => strlen($bytes),
             'last_checked_at' => now(), 'last_error_at' => null, 'last_error' => null]);
-        try {
-            $document->save();
-        } catch (\Throwable $e) {
-            if ($newPath) { $disk->delete($newPath); }
-            throw $e;
-        }
-        if ($newPath && $oldPath) {
-            \Illuminate\Support\Facades\DB::afterCommit(fn () => $disk->delete($oldPath));
-        }
+        if ($write) app(FlightFileStorage::class)->write($document, $bytes);
+        else $document->save();
     }
 }

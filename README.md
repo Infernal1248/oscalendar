@@ -1055,3 +1055,29 @@ current/next-month polling remains separate. Existing parsers already support th
 month payload. No records are deleted by the command; normal roster reconciliation
 applies when the portal response arrives. After completion run
 `php artisan flight-reports:schedule` to queue reports for newly discovered flights.
+
+### Unified flight file storage
+
+PDF and XLSX files now share the `flight_files` disk rooted at `storage/app/private`:
+`{user_id}/{flight_segment_id}/ofp.pdf`, `epz.pdf`, and `report.xlsx`.
+Historical reports without a segment use `{user_id}/0/{report_id}/report.xlsx`;
+no synthetic flight is created. If a subsequent import resolves the segment, the
+report moves to its flight folder. The original disks remain available for records
+not yet migrated, selected by each record's `storage_disk` column.
+
+Deploy backend, then run:
+
+```bash
+/opt/php/8.4/bin/php artisan migrate --force
+/opt/php/8.4/bin/php artisan optimize:clear
+/opt/php/8.4/bin/php artisan flight-files:organize
+```
+
+The organizer locks each record, checks source and destination contents, writes
+and verifies a temporary copy, updates the database, and deletes the old copy only
+after commit. It can be rerun safely; missing source files retain their references
+and are reported. Conflicting destinations stop migration without overwriting.
+Expiry and parsed statistics are unchanged. Downloads work before, during, and
+after migration. Do not manually move or delete the legacy folders; unreferenced
+files in the old root-level `storage/app/flight-documents` are not migrated blindly.
+No parser or frontend update is required.

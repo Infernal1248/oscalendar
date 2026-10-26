@@ -38,7 +38,7 @@ class FlightStatisticsController extends Controller {
     public function download(Request $request, FlightReport $flightReport) {
         abort_unless($request->user()->hasStatisticsAccess(), 403, 'Статистика пока недоступна для этого аккаунта.');
         abort_unless($flightReport->user_id === $request->user()->id, 404);
-        $disk = \Illuminate\Support\Facades\Storage::disk('flight_reports');
+        $disk = \Illuminate\Support\Facades\Storage::disk($flightReport->storage_disk ?? 'flight_reports');
         abort_unless($flightReport->expires_at->isFuture() && $flightReport->storage_path && $disk->exists($flightReport->storage_path), 404);
         return $disk->download($flightReport->storage_path, 'flight-report-'.$flightReport->id.'.xlsx', [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Cache-Control' => 'no-store, private']);
@@ -47,7 +47,7 @@ class FlightStatisticsController extends Controller {
         abort_unless($request->user()->hasStatisticsAccess(), 403, 'Статистика пока недоступна для этого аккаунта.');
         abort_unless($flightReport->user_id === $request->user()->id, 404);
         $available = $flightReport->expires_at->isFuture() && $flightReport->storage_path
-            && \Illuminate\Support\Facades\Storage::disk('flight_reports')->exists($flightReport->storage_path);
+            && \Illuminate\Support\Facades\Storage::disk($flightReport->storage_disk ?? 'flight_reports')->exists($flightReport->storage_path);
         return response()->json(['data' => $flightReport->data, 'file_available' => (bool) $available]);
     }
 }

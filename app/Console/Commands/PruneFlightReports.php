@@ -12,13 +12,15 @@ class PruneFlightReports extends Command {
             foreach ($rows as $row) DB::transaction(function () use ($row, $disk) {
                 $current = FlightReport::lockForUpdate()->find($row->id);
                 if (! $current?->storage_path || $current->expires_at->isFuture()) return;
+                $disk = Storage::disk($current->storage_disk ?? 'flight_reports');
                 if (! $disk->delete($current->storage_path)) throw new \RuntimeException('Could not prune report.');
                 $current->update(['storage_path' => null]);
             });
         });
         foreach ($disk->allFiles() as $path) {
-            if ($disk->lastModified($path) < now()->subDay()->timestamp && ! FlightReport::where('storage_path', $path)->exists()) $disk->delete($path);
+            if ($disk->lastModified($path) < now()->subDay()->timestamp && ! FlightReport::where('storage_disk', 'flight_reports')->where('storage_path', $path)->exists()) $disk->delete($path);
         }
+        app(\App\Services\FlightFileStorage::class)->pruneOrphans();
         return self::SUCCESS;
     }
 }

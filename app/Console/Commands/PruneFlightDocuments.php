@@ -23,6 +23,7 @@ class PruneFlightDocuments extends Command
                     $segment = FlightSegment::lockForUpdate()->find($document->flight_segment_id);
                     $current = FlightDocument::find($document->id);
                     if (! $segment || ! $current?->storage_path) { return; }
+                    $disk = Storage::disk($current->storage_disk ?? 'flight_documents');
                     $expiry = $service->expiry($segment);
                     $current->expires_at = $expiry;
                     if ($expiry && $expiry->lte(now())) {
@@ -38,10 +39,11 @@ class PruneFlightDocuments extends Command
         // Cascaded user/segment deletions and interrupted uploads can leave orphan files.
         foreach ($disk->allFiles() as $path) {
             if ($disk->lastModified($path) < now()->subDay()->timestamp
-                && ! FlightDocument::where('storage_path', $path)->exists()) {
+                && ! FlightDocument::where('storage_disk', 'flight_documents')->where('storage_path', $path)->exists()) {
                 $disk->delete($path);
             }
         }
+        app(\App\Services\FlightFileStorage::class)->pruneOrphans();
         return self::SUCCESS;
     }
 }
