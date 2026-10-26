@@ -31,7 +31,7 @@ class FlightStatisticsController extends Controller {
             'landings' => $personnel && ($d['landing_pf'] ?? null) === $personnel ? 1 : 0];
     }
     public function index(Request $request) {
-        abort_unless($request->user()->hasStatisticsAccess(), 403, 'Статистика пока недоступна для этого аккаунта.');
+        abort_unless($request->user()->hasStatisticsAccess(), 403, 'Статистика доступна в расширенной подписке.');
         $request->validate(['month' => ['nullable', 'date_format:Y-m']]);
         $personnel = PortalProfile::find($request->user()->id)?->personnel_number;
         $all = FlightReport::where('user_id', $request->user()->id)->orderByDesc('flight_date')->with(['syncRun:id,roster_item_id', 'flightSegment:id,roster_item_id'])
@@ -52,7 +52,7 @@ class FlightStatisticsController extends Controller {
             'groups' => $groups, 'flights' => $rows, 'unmatched' => $rows->where('counted', false)->count()]);
     }
     public function download(Request $request, FlightReport $flightReport) {
-        abort_unless($request->user()->hasStatisticsAccess(), 403, 'Статистика пока недоступна для этого аккаунта.');
+        abort_unless($request->user()->hasStatisticsAccess(), 403, 'Статистика доступна в расширенной подписке.');
         abort_unless($flightReport->user_id === $request->user()->id, 404);
         $disk = \Illuminate\Support\Facades\Storage::disk($flightReport->storage_disk ?? 'flight_reports');
         abort_unless($flightReport->expires_at->isFuture() && $flightReport->storage_path && $disk->exists($flightReport->storage_path), 404);
@@ -60,7 +60,7 @@ class FlightStatisticsController extends Controller {
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Cache-Control' => 'no-store, private']);
     }
     public function show(Request $request, FlightReport $flightReport) {
-        abort_unless($request->user()->hasStatisticsAccess(), 403, 'Статистика пока недоступна для этого аккаунта.');
+        abort_unless($request->user()->hasStatisticsAccess(), 403, 'Статистика доступна в расширенной подписке.');
         abort_unless($flightReport->user_id === $request->user()->id, 404);
         $available = $flightReport->expires_at->isFuture() && $flightReport->storage_path
             && \Illuminate\Support\Facades\Storage::disk($flightReport->storage_disk ?? 'flight_reports')->exists($flightReport->storage_path);
