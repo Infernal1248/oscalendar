@@ -1,7 +1,8 @@
 <?php
 namespace App\Http\Controllers;
 
-use App\Models\PilotCheck;
+use App\Models\{PilotCheck, ParserTask};
+use App\Services\PilotCheckActions;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -15,14 +16,31 @@ class PilotCheckController extends Controller
     {
         $this->authorizeAccess($request);
         $user = $request->user();
+        $refreshTask = ParserTask::where('task_key', "checks_refresh:rossiya_edu:user:{$user->id}")->first();
         $syncedAt = DB::table('pilot_check_syncs')->where('user_id', $user->id)->value('synced_at');
         return response()->json([
+            'certificates' => app(PilotCheckActions::class)->certificates($user->id),
+            'refresh_state' => app(PilotCheckActions::class)->state($refreshTask),
+            'next_sync_at' => $refreshTask?->next_run_at?->toIso8601String(),
+            'confirmation_state' => app(PilotCheckActions::class)->state(ParserTask::where('task_key', "checks_confirm_certificate:rossiya_edu:user:{$user->id}")->first()),
             'checks' => PilotCheck::where('user_id', $user->id)->where('is_current', true)->orderBy('due_on')->get()->filter(fn ($check) => $check->isVisibleCheck())->values(),
             'position' => $user->portalProfile?->position,
             'synced_at' => $syncedAt ? \Illuminate\Support\Carbon::parse($syncedAt, 'UTC')->toIso8601String() : null,
             'notifications_enabled' => (bool) $user->check_notifications_enabled,
             'timezone' => $user->timezone ?: 'UTC',
         ])->header('Cache-Control', 'private, no-store');
+    }
+    public function refresh(Request $request, PilotCheckActions $actions)
+    {
+        $task = $actions->queue($request->user());
+        return response()->json(['status'=>$actions->state($task)], 202);
+    }
+    public function confirmCertificate(Request $request, PilotCheckActions $actions)
+    {
+        $this->authorizeAccess($request);
+        $data = $request->validate(['version'=>['required', 'string', 'size:64'], 'acknowledged'=>['required', 'accepted']]);
+        $task = $actions->queue($request->user(), true, $data['version']);
+        return response()->json(['status'=>$actions->state($task)], 202);
     }
     private function validated(Request $request): array
     {

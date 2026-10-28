@@ -11,6 +11,14 @@ class PilotCheckSyncController extends Controller
     public function store(Request $request, SyncRun $syncRun)
     {
         $data = $request->validate([
+            'certificates' => ['sometimes', 'array', 'max:100'],
+            'certificates.*' => ['array:title,aircraft_type,valid_from,due_on,portal_status,confirmation_path'],
+            'certificates.*.title' => ['required', 'string', 'max:1000'],
+            'certificates.*.aircraft_type' => ['nullable', 'string', 'max:100'],
+            'certificates.*.valid_from' => ['nullable', 'date_format:Y-m-d'],
+            'certificates.*.due_on' => ['nullable', 'date_format:Y-m-d'],
+            'certificates.*.portal_status' => ['nullable', 'string', 'max:500'],
+            'certificates.*.confirmation_path' => ['required', 'in:/index/confirm_cr_educ-3'],
             'checks' => ['present', 'array', 'max:500'],
             'checks.*' => ['array:title,aircraft_type,document_number,issued_on,valid_from,due_on,portal_status'],
             'checks.*.title' => ['required', 'string', 'max:1000'],
@@ -23,7 +31,7 @@ class PilotCheckSyncController extends Controller
         ]);
         DB::transaction(function () use ($syncRun, $data) {
             $run = SyncRun::lockForUpdate()->findOrFail($syncRun->id);
-            abort_unless($run->status === 'running' && $run->task_type === 'checks_refresh'
+            abort_unless($run->status === 'running' && in_array($run->task_type, ['checks_refresh', 'checks_confirm_certificate'], true)
                 && $run->lock_expires_at?->isFuture(), 409, 'Sync run lease expired or wrong task.');
             $user = User::lockForUpdate()->findOrFail($run->user_id);
             abort_unless($user->hasReportsAccess(), 403, 'Extended subscription required.');
@@ -39,7 +47,12 @@ class PilotCheckSyncController extends Controller
                 PilotCheck::updateOrCreate(['user_id' => $user->id, 'source_key' => $key],
                     $row + ['origin' => 'portal', 'is_current' => true]);
             }
-            DB::table('pilot_check_syncs')->updateOrInsert(['user_id' => $user->id], ['sync_run_id' => $run->id, 'synced_at' => now()]);
+            $snapshot = ['sync_run_id'=>$run->id, 'synced_at'=>now()];
+            if (array_key_exists('certificates', $data)) {
+                $snapshot['certificates'] = json_encode($data['certificates'], JSON_UNESCAPED_UNICODE);
+                $snapshot['certificates_synced_at'] = now();
+            }
+            DB::table('pilot_check_syncs')->updateOrInsert(['user_id'=>$user->id], $snapshot);
         });
         return response()->json(['ok' => true]);
     }

@@ -31,6 +31,7 @@ class ParserJobService
             );
             $supportsReports = in_array('flight_reports_v1', $options['capabilities'] ?? [], true);
             $supportsChecks = in_array('checks_v1', $options['capabilities'] ?? [], true);
+            $supportsCertificates = in_array('check_certificates_v1', $options['capabilities'] ?? [], true);
             $now = now();
 
             $this->scheduler->ensureRosterTasks($source, $portal);
@@ -46,7 +47,8 @@ class ParserJobService
                 $userId,
                 $supportsRosterAcknowledgement,
                 $supportsChecks,
-                $supportsReports
+                $supportsReports,
+                $supportsCertificates
             );
             if (! $claimed) {
                 return null;
@@ -128,7 +130,8 @@ class ParserJobService
         ?int $userId,
         bool $supportsRosterAcknowledgement,
         bool $supportsChecks,
-        bool $supportsReports
+        bool $supportsReports,
+        bool $supportsCertificates
     ): ?array {
         $excludedUsers = [];
         $excludedTaskIds = [];
@@ -152,6 +155,7 @@ class ParserJobService
                 ->orderBy('parser_tasks.next_run_at')
                 ->orderBy('parser_tasks.id');
 
+            if (! $supportsCertificates) $query->where('parser_tasks.task_type', '!=', 'checks_confirm_certificate');
             if (! $supportsReports) $query->where('parser_tasks.task_type', '!=', 'flight_report');
             if (! $supportsChecks) $query->where('parser_tasks.task_type', '!=', 'checks_refresh');
             if (! $supportsRosterAcknowledgement) {
@@ -207,6 +211,14 @@ class ParserJobService
                 }
             }
 
+            if (in_array($task->task_type, ['checks_refresh', 'checks_confirm_certificate'], true)
+                && SyncRun::where('user_id', $task->user_id)->where('status', 'running')
+                    ->whereIn('task_type', ['checks_refresh', 'checks_confirm_certificate'])
+                    ->where('lock_expires_at', '>', $now)->exists()) {
+                $excludedTaskIds[] = $task->id;
+                continue;
+            }
+
             $taskPayload = $this->taskPayload($task);
             if ($taskPayload === null) {
                 $task->forceFill(['status' => 'completed', 'next_run_at' => null])->save();
@@ -256,6 +268,11 @@ class ParserJobService
                     $month->copy()->addMonth()->format('Y-m'),
                 ],
             ];
+        }
+
+        if ($task->task_type === 'checks_confirm_certificate') {
+            return $task->user?->hasReportsAccess() && ($task->payload['approved_by'] ?? null) === $task->user_id
+                ? $task->payload : null;
         }
 
         if ($task->task_type === 'checks_refresh') {
@@ -338,9 +355,10 @@ class ParserJobService
                     ])->save();
                 });
 
+            $requiresNewApproval = $task->task_type === 'checks_confirm_certificate';
             $task->forceFill([
-                'status' => 'scheduled',
-                'next_run_at' => $now,
+                'status' => $requiresNewApproval ? 'completed' : 'scheduled',
+                'next_run_at' => $requiresNewApproval ? null : $now,
                 'locked_at' => null,
                 'lock_expires_at' => null,
                 'locked_by' => null,

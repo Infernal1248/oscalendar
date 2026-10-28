@@ -208,6 +208,8 @@ class ParserTaskScheduler
             } elseif ($task->task_type === 'checks_refresh') {
                 $attributes['status'] = 'scheduled';
                 $attributes['next_run_at'] = $finishedAt->copy()->addHours(24);
+                $attributes['payload'] = [];
+                $attributes['priority'] = 75;
             } elseif ($task->task_type === 'roster_refresh' && ($task->payload['history'] ?? false)) {
                 $attributes['status'] = 'completed';
                 $attributes['next_run_at'] = null;
@@ -239,6 +241,11 @@ class ParserTaskScheduler
                 $attributes['refresh_requested'] = false;
             }
         } else {
+            if ($task->task_type === 'checks_confirm_certificate') {
+                $task->forceFill($attributes + ['status'=>'completed', 'next_run_at'=>null,
+                    'last_error_at'=>$finishedAt, 'last_error_text'=>$syncRun->error_text])->save();
+                return;
+            }
             if ($task->task_type === 'flight_report') {
                 $attributes['last_error_at'] = $finishedAt;
                 $attributes['last_error_text'] = $syncRun->error_text;

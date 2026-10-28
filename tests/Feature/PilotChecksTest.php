@@ -211,4 +211,115 @@ class PilotChecksTest extends TestCase
         Artisan::call('checks:notify');
         Http::assertSentCount(2);
     }
+    private function credential(User $user): void
+    {
+        PortalCredential::create(['user_id'=>$user->id, 'portal'=>'rossiya_edu', 'login'=>'test-'.$user->id,
+            'password_encrypted'=>Crypt::encryptString('test'), 'status'=>'active']);
+    }
+    private function certificateSnapshot(User $user): array
+    {
+        $rows = array_map(fn ($type) => ['title'=>'КВАЛИФ ПРОВЕРКА ... [Квалификационная проверка]',
+            'aircraft_type'=>$type, 'valid_from'=>'2026-10-21', 'due_on'=>'2027-10-21',
+            'portal_status'=>'Действует', 'confirmation_path'=>'/index/confirm_cr_educ-3'], ['С9Н','СУ95']);
+        DB::table('pilot_check_syncs')->updateOrInsert(['user_id'=>$user->id], ['synced_at'=>now(),
+            'sync_run_id'=>0, 'certificates'=>json_encode($rows, JSON_UNESCAPED_UNICODE), 'certificates_synced_at'=>now()]);
+        return $rows;
+    }
+    public function test_manual_refresh_runs_before_daily_deadline_without_creating_duplicate_tasks(): void
+    {
+        $user = $this->admin(); $this->credential($user);
+        $task = ParserTask::create(['task_key'=>"checks_refresh:rossiya_edu:user:{$user->id}",
+            'user_id'=>$user->id, 'source'=>'rossiya_edu', 'portal'=>'rossiya_edu', 'task_type'=>'checks_refresh',
+            'status'=>'scheduled', 'next_run_at'=>now()->addHours(23)]);
+        $this->actingAs($user)->postJson('/api/pilot-checks/refresh')->assertStatus(202)->assertJsonPath('status','queued');
+        $this->postJson('/api/pilot-checks/refresh')->assertStatus(202);
+        $this->assertDatabaseCount('parser_tasks',1);
+        $this->assertTrue($task->fresh()->next_run_at->equalTo(now()));
+        $this->getJson('/api/pilot-checks')->assertJsonPath('refresh_state','queued');
+        $run = SyncRun::create(['parser_task_id'=>$task->id, 'user_id'=>$user->id, 'source'=>'rossiya_edu',
+            'task_type'=>'checks_refresh', 'trigger'=>'scheduler', 'status'=>'finished', 'started_at'=>now(), 'finished_at'=>now()]);
+        app(ParserTaskScheduler::class)->completeTask($run);
+        $this->assertTrue($task->fresh()->next_run_at->equalTo(now()->addHours(24)));
+        $this->getJson('/api/pilot-checks')->assertJsonPath('refresh_state','idle');
+    }
+    public function test_new_daily_snapshot_replaces_expired_dates_and_keeps_manual_checks(): void
+    {
+        $user = $this->admin();
+        InternalApiToken::create(['name'=>'test','token_hash'=>InternalApiToken::hashToken('checks-test'),'is_active'=>true]);
+        $old = PilotCheck::create(['user_id'=>$user->id, 'origin'=>'portal', 'source_key'=>'old',
+            'title'=>'Квалификационная проверка', 'aircraft_type'=>'СУ95', 'valid_from'=>'2025-10-21', 'due_on'=>'2026-10-21', 'portal_status'=>'Просрочен']);
+        $manual = PilotCheck::create(['user_id'=>$user->id, 'origin'=>'manual', 'title'=>'Своя', 'due_on'=>'2026-11-01']);
+        $run = SyncRun::create(['user_id'=>$user->id,'source'=>'rossiya_edu','trigger'=>'scheduler','task_type'=>'checks_refresh',
+            'status'=>'running','started_at'=>now(),'lock_expires_at'=>now()->addMinutes(15)]);
+        $this->withToken('checks-test')->postJson('/api/internal/sync-runs/'.$run->id.'/checks', ['checks'=>[
+            ['title'=>'Квалификационная проверка','aircraft_type'=>'СУ95','valid_from'=>'2026-10-21','due_on'=>'2027-10-21','portal_status'=>'Действует']
+        ]])->assertOk();
+        $this->assertFalse($old->fresh()->is_current);
+        $this->assertTrue($manual->fresh()->is_current);
+        $this->actingAs($user)->getJson('/api/pilot-checks')->assertJsonCount(2,'checks')->assertJsonMissing(['portal_status'=>'Просрочен']);
+        $this->assertDatabaseHas('pilot_checks',['user_id'=>$user->id,'origin'=>'portal','is_current'=>true,'due_on'=>'2027-10-21']);
+    }
+    public function test_certificate_confirmation_requires_explicit_approval_and_capable_worker(): void
+    {
+        $user = $this->admin(); $this->credential($user); $rows = $this->certificateSnapshot($user);
+        $this->actingAs($user)->getJson('/api/pilot-checks')->assertJsonCount(2,'certificates.rows');
+        $this->assertDatabaseCount('parser_tasks',0); // Merely displaying the button cannot confirm anything.
+        $version = app(\App\Services\PilotCheckActions::class)->certificates($user->id)['version'];
+        $this->postJson('/api/pilot-checks/confirm-certificate',['version'=>$version])->assertUnprocessable();
+        $this->postJson('/api/pilot-checks/confirm-certificate',['version'=>str_repeat('0',64),'acknowledged'=>true])->assertConflict();
+        $payload = ['version'=>$version,'acknowledged'=>true];
+        $this->postJson('/api/pilot-checks/confirm-certificate',$payload)->assertStatus(202);
+        $this->postJson('/api/pilot-checks/confirm-certificate',$payload)->assertStatus(202);
+        $task = ParserTask::where('task_type','checks_confirm_certificate')->sole();
+        $this->assertSame($user->id,$task->payload['approved_by']);
+        InternalApiToken::create(['name'=>'test','token_hash'=>InternalApiToken::hashToken('cert-test'),'is_active'=>true]);
+        $options = ['source'=>'rossiya_edu','portal'=>'rossiya_edu','locked_by'=>'test','capabilities'=>['typed_tasks_v1']];
+        $old = $this->withToken('cert-test')->postJson('/api/internal/parser-jobs/claim',$options)->assertOk()->json('job');
+        $this->assertNotSame('checks_confirm_certificate',$old['task_type'] ?? null);
+        $options['capabilities'] = ['typed_tasks_v1','checks_v1','check_certificates_v1'];
+        $job = $this->postJson('/api/internal/parser-jobs/claim',$options)->assertOk()->json('job');
+        $this->assertSame('checks_confirm_certificate',$job['task_type']);
+        $this->assertCount(2,$job['task_payload']['certificates']);
+        $this->postJson('/api/internal/sync-runs/'.$job['sync_run_id'].'/checks',['checks'=>[], 'certificates'=>[]])->assertOk();
+        $this->postJson('/api/internal/sync-runs/'.$job['sync_run_id'].'/finish', ['status'=>'finished', 'stats'=>['checks_found'=>0]])->assertOk();
+        $this->actingAs($user)->getJson('/api/pilot-checks')->assertJsonCount(0,'certificates.rows')->assertJsonPath('confirmation_state','completed');
+        $this->assertSame('completed',$task->fresh()->status);
+        $this->assertNull($task->fresh()->next_run_at);
+    }
+    public function test_certificate_failure_requires_new_user_request_and_old_workers_preserve_snapshot(): void
+    {
+        $user=$this->admin(); $this->credential($user); $rows=$this->certificateSnapshot($user);
+        $service=app(\App\Services\PilotCheckActions::class);
+        $task=$service->queue($user,true,$service->certificates($user->id)['version']);
+        $run=SyncRun::create(['parser_task_id'=>$task->id,'user_id'=>$user->id,'source'=>'rossiya_edu','trigger'=>'scheduler',
+            'task_type'=>'checks_confirm_certificate','status'=>'failed','started_at'=>now(),'finished_at'=>now(),'error_text'=>'Portal rejected action']);
+        app(ParserTaskScheduler::class)->completeTask($run);
+        $this->assertSame('failed',$service->state($task->fresh()));
+        $this->assertNull($task->fresh()->next_run_at);
+        $legacy=SyncRun::create(['user_id'=>$user->id,'source'=>'rossiya_edu','trigger'=>'scheduler','task_type'=>'checks_refresh',
+            'status'=>'running','started_at'=>now(),'lock_expires_at'=>now()->addMinutes(15)]);
+        InternalApiToken::create(['name'=>'test','token_hash'=>InternalApiToken::hashToken('legacy-checks'),'is_active'=>true]);
+        $this->withToken('legacy-checks')->postJson('/api/internal/sync-runs/'.$legacy->id.'/checks',['checks'=>[]])->assertOk();
+        $this->assertSame($rows,$service->certificates($user->id)['rows']);
+        $this->actingAs(User::create(['status'=>'active','role'=>'user']))->postJson('/api/pilot-checks/refresh')->assertForbidden();
+        $this->postJson('/api/pilot-checks/confirm-certificate',['version'=>$service->certificates($user->id)['version'],'acknowledged'=>true])->assertForbidden();
+    }
+
+    public function test_expired_certificate_worker_does_not_automatically_repeat_confirmation(): void
+    {
+        $user = $this->admin(); $this->credential($user); $this->certificateSnapshot($user);
+        $actions = app(\App\Services\PilotCheckActions::class);
+        $task = $actions->queue($user, true, $actions->certificates($user->id)['version']);
+        $options = ['user_id'=>$user->id, 'capabilities'=>['typed_tasks_v1','checks_v1','check_certificates_v1']];
+        $job = app(ParserJobService::class)->claim($options);
+        $this->assertSame('checks_confirm_certificate', $job['task_type']);
+        ParserTask::whereKey($task->id)->update(['lock_expires_at'=>now()->subSecond()]);
+        SyncRun::whereKey($job['sync_run_id'])->update(['lock_expires_at'=>now()->subSecond()]);
+        $nextJob = app(ParserJobService::class)->claim($options);
+        $this->assertNotSame('checks_confirm_certificate', $nextJob['task_type'] ?? null);
+        $this->assertSame('failed', $actions->state($task->fresh()));
+        $this->assertNull($task->fresh()->next_run_at);
+        $this->assertSame('failed', SyncRun::findOrFail($job['sync_run_id'])->status);
+    }
+
 }
