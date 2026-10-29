@@ -21,7 +21,8 @@ class SystemMonitor
                 ->where('portal_credentials.status', 'active'));
         $due = (clone $eligible)->where('status', 'scheduled')->where('next_run_at', '<=', now());
         $oldest = (clone $due)->min('next_run_at');
-        $recentFailures = SyncRun::where('status', 'failed')->where('finished_at', '>=', now()->subMinutes(15));
+        $recentFailures = PortalAuthFailure::exclude(SyncRun::where('status', 'failed'))
+            ->where('finished_at', '>=', now()->subMinutes(15));
 
         return [
             'nodes' => $nodes,
@@ -36,7 +37,7 @@ class SystemMonitor
             'last_roster' => ParserTask::where('task_type', 'roster_refresh')->max('last_success_at'),
             'notification_backlog' => app(\App\Services\Monitoring\RuntimeHealth::class)->notificationBacklog(),
             // Retry scheduling moves next_run_at; use last success (creation before the first success).
-            'stale_roster' => (clone $eligible)->where('task_type', 'roster_refresh')
+            'stale_roster' => PortalAuthFailure::exclude(clone $eligible, 'parser_tasks.last_error_text')->where('task_type', 'roster_refresh')
                 ->whereIn('status', ['scheduled', 'running'])
                 ->whereRaw('COALESCE(last_success_at, parser_tasks.created_at) <= ?', [now()->subMinutes(config('monitor.stale_sync_minutes'))])->exists(),
         ];

@@ -13,7 +13,6 @@ use App\Models\TelegramAccount;
 use App\Models\User;
 use App\Services\ParserTaskScheduler;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -98,7 +97,7 @@ class TelegramBotService
             return;
         }
 
-        if ($this->handleConversation($chatId, $account, $text)) {
+        if ($this->handleConversation($chatId, $account, $text, (string) ($message['text'] ?? ''))) {
             return;
         }
 
@@ -164,7 +163,7 @@ class TelegramBotService
         ]);
     }
 
-    private function handleConversation(int $chatId, TelegramAccount $account, string $text): bool
+    private function handleConversation(int $chatId, TelegramAccount $account, string $text, ?string $rawText = null): bool
     {
         $conversation = $account->activeConversation();
 
@@ -202,9 +201,14 @@ class TelegramBotService
             return true;
         }
 
+        if (in_array($conversation->state, [self::STATE_PORTAL_PASSWORD, self::STATE_CHANGE_PASSWORD], true) && mb_strlen($rawText ?? $text) > 1000) {
+            $this->client->sendMessage($chatId, 'Пароль не должен превышать 1000 символов.');
+            return true;
+        }
+
         if ($conversation->state === self::STATE_PORTAL_PASSWORD) {
             $payload = $conversation->payload ?: [];
-            $this->savePortalCredentials($account->user, $payload['login'] ?? '', $text);
+            $this->savePortalCredentials($account->user, $payload['login'] ?? '', $rawText ?? $text);
             $this->closeConversation($conversation);
 
             if ($this->isActiveUser($account)) {
@@ -220,9 +224,11 @@ class TelegramBotService
         }
 
         if ($conversation->state === self::STATE_CHANGE_PASSWORD) {
-            $this->savePortalCredentials($account->user, $this->portalLogin($account->user), $text);
+            $this->savePortalCredentials($account->user, $this->portalLogin($account->user), $rawText ?? $text);
             $this->closeConversation($conversation);
-            $this->client->sendMessage($chatId, 'Пароль личного кабинета обновлён.', [
+            $loginNotice = $account->user->login === null && $account->user->role === 'user'
+                ? ' Для входа в OSCalendar теперь используйте сохранённый новый пароль. Текущая сессия остаётся открытой.' : '';
+            $this->client->sendMessage($chatId, 'Пароль OpenSky сохранён.'.$loginNotice.' Обновление рабочего плана поставлено в очередь; результат входа будет известен после синхронизации.', [
                 'reply_markup' => $this->mainKeyboard($account),
             ]);
             return true;
@@ -290,7 +296,9 @@ class TelegramBotService
 
             case 'Сменить пароль':
                 $this->setConversation($account, self::STATE_CHANGE_PASSWORD);
-                $this->client->sendMessage($chatId, 'Введите новый пароль от личного кабинета.');
+                $this->client->sendMessage($chatId, 'Введите актуальный пароль OpenSky.'
+                    .($account->user->login === null && $account->user->role === 'user'
+                        ? ' После сохранения он также будет использоваться для входа в OSCalendar.' : ''));
                 return;
 
             case 'Мой календарь':
@@ -908,15 +916,7 @@ class TelegramBotService
 
     private function savePortalCredentials(User $user, string $login, string $password): void
     {
-        PortalCredential::query()->updateOrCreate(
-            ['user_id' => $user->id, 'portal' => 'rossiya_edu'],
-            [
-                'login' => $login,
-                'password_encrypted' => Crypt::encryptString($password),
-                'key_version' => 1,
-                'status' => 'active',
-            ]
-        );
+        app(\App\Services\PortalCredentialUpdater::class)->save($user, $login, $password);
     }
 
     private function portalLogin(User $user): string

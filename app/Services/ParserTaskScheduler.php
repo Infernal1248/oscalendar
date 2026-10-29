@@ -215,11 +215,12 @@ class ParserTaskScheduler
                 $attributes['next_run_at'] = null;
             } elseif ($task->task_type === 'roster_refresh') {
                 $attributes['status'] = 'scheduled';
-                $attributes['next_run_at'] = $this->nextFromTaskStart(
+                $attributes['next_run_at'] = $task->refresh_requested ? $finishedAt : $this->nextFromTaskStart(
                     $task,
                     $finishedAt,
                     max(1, (int) config('parser.roster_interval_minutes', 30)) * 60
                 );
+                $attributes['refresh_requested'] = false;
             } elseif ($task->task_type === 'flight_details') {
                 $item = $task->rosterItem()->first();
                 [$priority, $nextRunAt] = $this->isFlightEligible($item)

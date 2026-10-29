@@ -66,6 +66,8 @@ class ParserJobService
                 'portal' => $credential->portal,
                 'login' => $credential->login,
                 'password' => Crypt::decryptString($credential->password_encrypted),
+                // Opaque revision of the randomized ciphertext, not a hash of the password.
+                'credentials_version' => hash('sha256', $credential->login.'|'.$credential->password_encrypted),
                 'attempt' => $syncRun->attempt,
                 'locked_by' => $syncRun->locked_by,
                 'lock_expires_at' => optional($syncRun->lock_expires_at)->toIso8601String(),

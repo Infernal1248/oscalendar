@@ -84,6 +84,18 @@ class AccountController extends Controller
             ->header('Cache-Control', 'private, no-store');
     }
 
+    public function updatePortalCredentials(Request $request, \App\Services\PortalCredentialUpdater $updater): JsonResponse
+    {
+        abort_unless($request->user()->status === 'active', 403);
+        abort_unless($request->user()->portalCredentials()->where('portal', 'rossiya_edu')->exists(), 404);
+        $data = $request->validate([
+            'login' => ['required', 'string', 'max:150', 'regex:/\S/u'],
+            'password' => ['required', 'string', 'max:1000', 'confirmed', 'regex:/\S/u'],
+        ]);
+        $updater->save($request->user(), $data['login'], $data['password']);
+        return response()->json($this->userData($request->user()->fresh()))->header('Cache-Control', 'private, no-store');
+    }
+
     public function logout(Request $request): JsonResponse
     {
         if (is_string($endpoint = $request->input('push_endpoint'))) {
@@ -273,6 +285,7 @@ class AccountController extends Controller
         $permissions = $user->effectivePermissions();
         $calendarUrl = null;
         $subscription = $user->subscriptionSummary();
+        $credential = $user->portalCredentials()->where('portal', 'rossiya_edu')->first();
         if ($user->role !== 'admin' && $subscription['full_access']) {
             $feed = CalendarFeed::query()->firstOrCreate(
                 ['user_id' => $user->id, 'is_active' => true],
@@ -290,6 +303,8 @@ class AccountController extends Controller
         return [
             'id' => $user->id,
             'display_name' => $user->display_name,
+            'portal_connection' => $credential ? ['login' => $credential->login, 'status' => $credential->status,
+                'uses_portal_login' => $user->login === null && $user->role === 'user'] : null,
             'portal_profile' => $user->portalProfile ? [
                 'full_name' => $user->portalProfile->full_name,
                 'position' => $user->portalProfile->position,

@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Internal;
 
 use App\Http\Controllers\Controller;
-use App\Models\PortalCredential;
 use App\Models\SyncRun;
 use App\Services\ParserTaskScheduler;
 use Illuminate\Support\Carbon;
@@ -132,25 +131,7 @@ class SyncRunController extends Controller
 
     private function updateCredentialStatus(SyncRun $syncRun): void
     {
-        if (! $syncRun->user_id || $syncRun->status === 'skipped') {
-            return;
-        }
-
-        $attributes = $syncRun->status === 'finished'
-            ? [
-                'last_success_at' => $syncRun->finished_at ?: now(),
-                'last_error_at' => null,
-                'last_error_text' => null,
-            ]
-            : [
-                'last_error_at' => $syncRun->finished_at ?: now(),
-                'last_error_text' => $syncRun->error_text,
-            ];
-
-        PortalCredential::query()
-            ->where('user_id', $syncRun->user_id)
-            ->where('portal', $syncRun->source)
-            ->update($attributes);
+        app(\App\Services\PortalAuthNotifications::class)->record($syncRun);
     }
 
     public function log(Request $request, SyncRun $syncRun): JsonResponse

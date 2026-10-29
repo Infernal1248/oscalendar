@@ -55,6 +55,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/admin/users/{user}/subscription/payments/{payment}/cancel', [\App\Http\Controllers\SubscriptionController::class, 'cancel'])->whereNumber('payment');
     Route::get('/account/photo', [AccountController::class, 'photo']);
     Route::patch('/account', [AccountController::class, 'updateProfile']);
+    Route::patch('/account/portal-credentials', [AccountController::class, 'updatePortalCredentials'])->middleware('throttle:6,1');
     Route::post('/auth/logout', [AccountController::class, 'logout']);
     Route::get('/dashboard', [AccountController::class, 'dashboard']);
     Route::get('/workplan', [AccountController::class, 'workplan']);

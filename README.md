@@ -1114,3 +1114,23 @@ appear immediately below the time block, before fuel. The report detail API deri
 with «Код» and «Наименование» columns, including multiple reason rows. Existing
 reports need no re-download, migration or parser update. Deploy backend and frontend
 together; empty reason tables are omitted from the dialog.
+
+
+### Persistent portal authentication failures
+
+Portal authentication errors remain in `sync_runs` and the manual `/errors` history, but are excluded from administrator repeated-failure alerts, stale-roster alerts caused by authentication, and scheduled failure summaries. HTTP/API authorization errors, timeouts and server failures remain operational alerts.
+
+`portal:notify-auth` runs every five minutes through the existing Laravel scheduler. It notifies the affected active user after at least **24 hours** and **5 consecutive portal authentication failures**, with no gap longer than **2 hours**. A successful sync on any VM, another type of failure, or an edit to portal login/password/status clears the incident. Results from workers using credentials from before an edit or attempts started before a newer success cannot restart it. Tracking begins with newly completed runs after deployment; historical failures do not trigger immediate messages.
+
+One notice is sent per incident, preferring the user's enabled Telegram channel, with web push as fallback. Only linked accounts/subscribed devices are used; no administrator recipient is added. The message asks the user to check portal access and update their credentials without claiming the password is definitely wrong. Failed delivery retries after an hour while the incident is still current. Without an enabled channel, nothing is marked delivered. A new incident can notify again after recovery or a credentials edit.
+
+Settings: `PARSER_AUTH_FAILURE_NOTIFY_HOURS=24`, `PARSER_AUTH_FAILURE_MIN_ATTEMPTS=5`, `PARSER_AUTH_FAILURE_MAX_GAP_HOURS=2`. Deploy the backend and run `php artisan migrate --force`. The existing `schedule:run` cron handles delivery; no additional cron entry is required.
+
+
+### Updating OpenSky credentials
+
+The profile has an OpenSky connection form at `/profile#opensky`. Authenticated active users with an existing connection can update their own portal login/password through `PATCH /api/account/portal-credentials`; password confirmation is required. Passwords retain leading/trailing spaces and are encrypted at rest. No password or ciphertext is returned in the account response. A save queues roster refresh immediately, or requests a follow-up when an older job is already running. It does not claim that the portal has accepted the new password. For accounts using portal credentials to sign in to OSCalendar, the newly saved credentials also become their OSCalendar login; separate local credentials remain unchanged.
+
+Telegram password changes use the same updater and preserve the password exactly. Auth notices include the profile link and a Telegram button; push clicks open the same form. After OSCalendar login, the profile destination is retained. The profile URL uses `YOOKASSA_FRONTEND_URL` (the existing frontend setting), falling back to `APP_URL`.
+
+Parser jobs include an opaque `credentials_version` derived from the randomized encrypted credential value and login. Updated parsers associate saved sessions with that revision, forcing a new portal login on each VM after a credential edit; legacy session files are reauthenticated once. No password hash is written to the session file. A page containing both a login form and logout text is rejected as an unsuccessful login. Deploy backend (including the auth-notification migration), parser, and frontend together for the complete flow.

@@ -104,7 +104,9 @@ class MonitorHistory
         $until = ($until ?: now())->copy()->utc()->startOfMinute();
         $hours = config('monitor.summary_hours');
         $from = $until->copy()->subHours($hours);
-        $runs = SyncRun::where('finished_at', '>=', $from)->where('finished_at', '<', $until);
+        $runs = SyncRun::where('finished_at', '>=', $from)->where('finished_at', '<', $until)
+            ->where(fn ($q) => $q->where('status', '!=', 'failed')
+                ->orWhere(fn ($failed) => \App\Services\PortalAuthFailure::exclude($failed)));
         $counts = (clone $runs)->selectRaw('status, COUNT(*) AS total')->groupBy('status')->pluck('total', 'status');
         $byType = (clone $runs)->selectRaw('task_type, status, COUNT(*) AS total')->groupBy('task_type', 'status')->get();
         $taskLabels = ['roster_refresh' => 'Рабочие планы', 'flight_details' => 'Детали рейсов',

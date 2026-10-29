@@ -9,6 +9,8 @@ class Kernel extends ConsoleKernel
 {
     protected function schedule(\Illuminate\Console\Scheduling\Schedule $schedule)
     {
+        $schedule->command('portal:notify-auth')->everyFiveMinutes()->withoutOverlapping(10)->runInBackground()
+            ->when(fn () => app(\App\Services\PortalAuthNotifications::class)->due()->exists());
         $schedule->command('checks:notify')->everyFiveMinutes()->withoutOverlapping(10)->runInBackground()
             ->when(fn () => app(\App\Services\PilotCheckReminderQueue::class)->shouldRun());
         $schedule->command('flight-reports:schedule')->hourly()->withoutOverlapping(60);

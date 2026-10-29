@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\FlightSegment;
-use App\Models\PortalCredential;
 use App\Models\RosterChangeEvent;
 use App\Models\RosterItem;
 use App\Models\SyncRun;
@@ -48,14 +47,7 @@ class SyncResultService
                 'stats' => $stats,
             ]))->save();
 
-            PortalCredential::query()
-                ->where('user_id', $userId)
-                ->where('portal', $source)
-                ->update([
-                    'last_success_at' => now(),
-                    'last_error_at' => null,
-                    'last_error_text' => null,
-                ]);
+            app(PortalAuthNotifications::class)->record($syncRun);
 
             return [
                 'sync_run_id' => $syncRun->id,
