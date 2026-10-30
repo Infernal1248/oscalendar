@@ -26,7 +26,8 @@ class FlightTimeController extends Controller
     {
         abort_unless($request->user()->hasFlightTimeAccess(), 403);
         $columns = array_keys(FlightTimeEntry::COLUMNS);
-        $rules = ['page' => ['sometimes', 'integer', 'min:1'], 'per_page' => ['sometimes', 'integer', 'between:1,500'],
+        $rules = ['page' => ['sometimes', 'integer', 'min:1'], 'per_page' => ['sometimes',
+            Rule::when($request->input('per_page') === 'all', ['in:all'], ['integer', 'min:1'])],
             'date_from' => ['nullable', 'date_format:Y-m-d'], 'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
             'sort_by' => ['sometimes', Rule::in([...$columns, 'entry_month'])], 'sort_order' => ['sometimes', Rule::in(['asc', 'desc'])],
             'group_by' => ['nullable', Rule::in([...$columns, 'entry_month'])],
@@ -73,10 +74,12 @@ class FlightTimeController extends Controller
         $totals = (clone $query)->selectRaw($sums)->first()->only(FlightTimeEntry::MINUTES);
         $group = $data['group_by'] ?? null;
         $sort = $data['sort_by'] ?? 'entry_date';
+        $all = ($data['per_page'] ?? null) === 'all';
+        $perPage = $all ? max(1, (clone $query)->count()) : ($data['per_page'] ?? 50);
         $ordered = (clone $query)->select(['id', 'user_id', ...$columns])->selectRaw('SUBSTR(entry_date, 1, 7) AS entry_month');
         if ($group && $group !== $sort) $ordered->orderBy($group);
         $page = $ordered->orderBy($sort, $data['sort_order'] ?? 'desc')->orderBy('row_position')->orderBy('id')
-            ->paginate($data['per_page'] ?? 50);
+            ->paginate($perPage, ['*'], 'page', $all ? 1 : null);
         $groupTotals = [];
         if ($group && $page->count()) {
             $expression = $group === 'entry_month' ? 'SUBSTR(entry_date, 1, 7)' : $group;

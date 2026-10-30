@@ -201,6 +201,25 @@ class FlightTimeTest extends TestCase
         $this->assertSame('2026-10-31', $next['task_payload']['date_to']);
     }
 
+    public function test_page_size_can_exceed_500_and_all_respects_filters_and_own_user(): void
+    {
+        $this->seedRows($this->tester, array_map(fn ($position) => $this->row('2026-10-30', $position, 1), range(1, 501)));
+        $this->seedRows($this->tester, [$this->row('2026-09-30', 1, 10)]);
+        $this->seedRows($this->ordinary, [$this->row('2026-10-30', 1, 100)]);
+        $this->actingAs($this->tester, 'sanctum')->getJson('/api/flight-time?per_page=1000')
+            ->assertOk()->assertJsonCount(502, 'data')->assertJsonPath('total', 502);
+        $this->getJson('/api/flight-time?per_page=all&page=2&date_from=2026-10-01&group_by=entry_month')
+            ->assertOk()->assertJsonCount(501, 'data')->assertJsonPath('total', 501)
+            ->assertJsonPath('current_page', 1)->assertJsonPath('last_page', 1)
+            ->assertJsonPath('totals.actual_flight_minutes', 501)
+            ->assertJsonPath('group_totals.0.totals.actual_flight_minutes', 501);
+        $this->getJson('/api/flight-time?per_page=all&date_from=2027-01-01')
+            ->assertOk()->assertJsonCount(0, 'data')->assertJsonPath('total', 0);
+        foreach (['0', '-1', 'invalid', '1.5'] as $size) {
+            $this->getJson('/api/flight-time?per_page='.$size)->assertUnprocessable();
+        }
+    }
+
     public function test_duration_filters_sorting_and_totals_cover_all_filtered_rows_not_just_one_page(): void
     {
         $this->seedRows($this->tester, [$this->row('2026-10-29', 1, 30), $this->row('2026-10-30', 1, 153)]);
