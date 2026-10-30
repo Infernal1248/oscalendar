@@ -121,6 +121,56 @@ class MonitoringHistoryTest extends TestCase
         }
     }
 
+    public function test_internal_workloads_are_separate_and_counted_once_without_private_paths(): void
+    {
+        foreach ([
+            'parser-jobs/secret-id/heartbeat' => 'job-heartbeat',
+            'sync-runs/secret-id/partial-result' => 'partial-result',
+            'sync-runs/secret-id/finish' => 'sync-finish',
+            'sync-runs/secret-id/log' => 'sync-log',
+            'sync-runs/start' => 'sync-start',
+            'sync-runs/secret-id/checks' => 'checks-result',
+            'sync-runs/secret-id/flight-report' => 'flight-report',
+            'sync-runs/secret-id/documents' => 'documents',
+            'sync-result' => 'sync-result',
+            'legacy-endpoint' => 'parser-results',
+        ] as $path => $group) {
+            $metrics = new \App\Services\Monitoring\ProcessMetrics();
+            $metrics->request(new \Illuminate\Foundation\Http\Events\RequestHandled(
+                \Illuminate\Http\Request::create('/api/internal/'.$path.'?token=secret-token'), response('', 200)));
+            $metrics->finish();
+            $metrics->finish();
+            $rows = app(MetricStore::class)->read(now(), now()->addMinute())['groups'];
+            $this->assertSame(1, $rows['http:'.$group]['count']);
+        }
+        $this->assertSame(10, collect($rows)->sum('count'));
+        $this->assertStringNotContainsString('secret', file_get_contents(glob($this->metricsPath.'/*.json')[0]));
+    }
+
+    public function test_warning_breakdown_preserves_legacy_totals_without_storing_messages_or_context(): void
+    {
+        $until = now()->copy();
+        $this->travelTo($until->copy()->subMinute());
+        app(MetricStore::class)->write($this->measurement()); // Old data has no categories.
+        $metrics = new \App\Services\Monitoring\ProcessMetrics();
+        foreach (['Internal API rejected: secret-token', 'Parser job heartbeat rejected', 'private-message'] as $message) {
+            $metrics->log(new \Illuminate\Log\Events\MessageLogged('warning', $message, ['password' => 'secret-password']));
+        }
+        $metrics->finish();
+        $this->travelTo($until);
+        $report = app(MonitorHistory::class)->loadReport();
+        $this->assertStringContainsString('предупреждений: 4;', $report);
+        $this->assertStringContainsString('Авторизация внутренних API — 1', $report);
+        $this->assertStringContainsString('Отклонённые heartbeat задач — 1', $report);
+        $this->assertStringContainsString('Прочие предупреждения — 1', $report);
+        $this->assertStringContainsString('Предупреждений с разбивкой: 3 / 4.', $report);
+        $contents = file_get_contents(glob($this->metricsPath.'/*.json')[0]);
+        foreach (['secret-token', 'secret-password', 'private-message'] as $secret) {
+            $this->assertStringNotContainsString($secret, $contents);
+            $this->assertStringNotContainsString($secret, $report);
+        }
+    }
+
     public function test_legacy_and_new_http_counters_are_combined_with_explicit_breakdown_coverage(): void
     {
         $until = now()->copy();

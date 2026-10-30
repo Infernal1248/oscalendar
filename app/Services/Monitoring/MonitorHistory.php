@@ -62,11 +62,19 @@ class MonitorHistory
             $lines[] = 'Для сравнения нужны два полных периода наблюдений.';
         }
         $labels = ['http:claim' => 'Выдача задач', 'http:node-heartbeat' => 'Heartbeat VM',
-            'http:parser-results' => 'Результаты/heartbeat задач', 'http:telegram' => 'Telegram API бэкенда',
+            'http:parser-results' => 'Результаты/heartbeat задач (прежняя общая группа и прочие внутренние)',
+            'http:job-heartbeat' => 'Heartbeat задач', 'http:partial-result' => 'Частичные результаты',
+            'http:sync-finish' => 'Завершение синхронизаций', 'http:sync-log' => 'Запись логов парсеров',
+            'http:sync-start' => 'Начало синхронизаций', 'http:checks-result' => 'Результаты допусков',
+            'http:flight-report' => 'Загрузка итоговых отчётов рейсов', 'http:documents' => 'Загрузка документов',
+            'http:sync-result' => 'Полные результаты синхронизаций', 'http:telegram' => 'Telegram API бэкенда',
             'http:other' => 'Остальные HTTP', 'http:monitor' => 'Внешняя проверка здоровья',
             'cli:schedule:run' => 'Планировщик (включая monitor/push)',
             'cli:schedule:finish' => 'Завершение фоновых задач', 'cli:telegram:notify-roster' => 'Telegram-рассылка',
-            'cli:checks:notify' => 'Напоминания о допусках', 'cli:other' => 'Прочие CLI'];
+            'cli:checks:notify' => 'Напоминания о допусках', 'cli:other' => 'Прочие CLI',
+            'cli:flight-documents:prune' => 'Очистка документов',
+            'cli:flight-reports:schedule' => 'Подготовка задач итоговых отчётов',
+            'cli:flight-reports:prune' => 'Очистка итоговых отчётов'];
         foreach ($groups->sortByDesc('cpu')->take(8) as $name => $row) {
             $label = $labels[$name] ?? $name;
             $average = $row['count'] ? $row['wall'] / $row['count'] : 0;
@@ -87,6 +95,18 @@ class MonitorHistory
             '; ошибок в логах: '.$groups->sum('errors').'; предупреждений: '.$groups->sum('warnings').
             '; неуспешных CLI-вызовов: '.$groups->sum('failed').'.';
         array_push($lines, ...$this->http4xxBreakdown($groups->all()));
+        $classifiedWarnings = 0;
+        $warningLines = [];
+        foreach (WarningCategories::labels() as $category => $label) {
+            $count = $groups->sum(fn ($row) => $row['warning:'.$category] ?? 0);
+            if (! $count) continue;
+            $classifiedWarnings += $count;
+            $warningLines[] = $label.' — '.$count;
+        }
+        if ($warningLines) {
+            $lines[] = 'Предупреждения по категориям: '.implode('; ', $warningLines).'.';
+            $lines[] = 'Предупреждений с разбивкой: '.$classifiedWarnings.' / '.$groups->sum('warnings').'.';
+        }
         $lines[] = 'Пик памяти одного PHP-выполнения: '.number_format($groups->max('memory_max') / 1048576, 1).' МиБ (не RAM всего аккаунта).';
         $hostLoads = $samples->map(fn ($s) => $s['host_load'][0] ?? null)->filter(fn ($v) => $v !== null);
         if ($hostLoads->isNotEmpty()) $lines[] = 'Load average среды сервера, ср./макс.: '.number_format($hostLoads->avg(), 2).'/'.number_format($hostLoads->max(), 2).'. Это очередь нагрузки, не CPU% аккаунта; возможны чужие процессы.';

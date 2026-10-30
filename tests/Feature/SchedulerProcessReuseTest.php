@@ -34,6 +34,10 @@ class SchedulerProcessReuseTest extends TestCase
             ->shouldReceive('shouldRun')->andReturn(false);
         $this->mock(\App\Services\PilotCheckReminderQueue::class)
             ->shouldReceive('shouldRun')->andReturn(false);
+        $authNotices = \Mockery::mock(\Illuminate\Database\Eloquent\Builder::class);
+        $authNotices->shouldReceive('exists')->andReturn(false);
+        $this->mock(\App\Services\PortalAuthNotifications::class)
+            ->shouldReceive('due')->andReturn($authNotices);
         $events = [];
         foreach (app(Schedule::class)->events() as $event) {
             if ($event instanceof CallbackEvent && in_array($event->description, ['monitor:check', 'push:send'], true)) {

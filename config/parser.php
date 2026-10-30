@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'log_heartbeats' => (bool) env('PARSER_LOG_HEARTBEATS', false),
     'roster_interval_minutes' => (int) env('PARSER_ROSTER_INTERVAL_MINUTES', 30),
     'retry_interval_minutes' => (int) env('PARSER_RETRY_INTERVAL_MINUTES', 10),
     'max_concurrent_per_user' => (int) env('PARSER_MAX_CONCURRENT_PER_USER', 3),

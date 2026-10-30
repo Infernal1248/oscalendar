@@ -36,6 +36,11 @@ class MetricStore
                 $row[$counter] += $measurement[$counter] ?? 0;
             }
             $status = (int) ($measurement['http_status'] ?? 0);
+            foreach (($measurement['warning_categories'] ?? []) as $category => $count) {
+                if (! array_key_exists($category, WarningCategories::labels()) || ! is_int($count) || $count <= 0) continue;
+                $key = 'warning:'.$category;
+                $row[$key] = ($row[$key] ?? 0) + $count;
+            }
             if ($status >= 400 && $status < 500 && ($measurement['http_4xx'] ?? 0)) {
                 $addressGroup = $measurement['http_address_group'] ?? 'other';
                 if (! is_string($addressGroup) || ! array_key_exists($addressGroup, HttpAddressGroups::labels())) $addressGroup = 'other';

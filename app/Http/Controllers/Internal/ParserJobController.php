@@ -58,22 +58,21 @@ class ParserJobController extends Controller
             'lock_seconds' => ['nullable', 'integer', 'min:60', 'max:7200'],
         ]);
 
-        Log::info('Parser job heartbeat requested', [
-            'sync_run_id' => $syncRun->id,
-            'user_id' => $syncRun->user_id,
-            'status' => $syncRun->status,
-            'locked_by' => $data['locked_by'] ?? $syncRun->locked_by,
-            'lock_seconds' => $data['lock_seconds'] ?? null,
-        ]);
+        try {
+            $syncRun = $service->heartbeat($syncRun, $data);
+        } catch (\Symfony\Component\HttpKernel\Exception\ConflictHttpException $exception) {
+            Log::warning('Parser job heartbeat rejected', ['sync_run_id' => $syncRun->id]);
+            throw $exception;
+        }
 
-        $syncRun = $service->heartbeat($syncRun, $data);
-
-        Log::info('Parser job heartbeat stored', [
-            'sync_run_id' => $syncRun->id,
-            'status' => $syncRun->status,
-            'locked_by' => $syncRun->locked_by,
-            'lock_expires_at' => optional($syncRun->lock_expires_at)->toIso8601String(),
-        ]);
+        if (config('parser.log_heartbeats', false)) {
+            Log::debug('Parser job heartbeat stored', [
+                'sync_run_id' => $syncRun->id,
+                'status' => $syncRun->status,
+                'locked_by' => $syncRun->locked_by,
+                'lock_expires_at' => optional($syncRun->lock_expires_at)->toIso8601String(),
+            ]);
+        }
 
         return response()->json([
             'ok' => true,

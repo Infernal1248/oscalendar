@@ -1127,6 +1127,30 @@ One notice is sent per incident, preferring the user's enabled Telegram channel,
 Settings: `PARSER_AUTH_FAILURE_NOTIFY_HOURS=24`, `PARSER_AUTH_FAILURE_MIN_ATTEMPTS=5`, `PARSER_AUTH_FAILURE_MAX_GAP_HOURS=2`. Deploy the backend and run `php artisan migrate --force`. The existing `schedule:run` cron handles delivery; no additional cron entry is required.
 
 
+### Internal API overhead and monitoring categories
+
+Internal API tokens are authenticated from the database on every request, so
+revocation and expiry still take effect immediately. Only the informational
+`last_used_at` timestamp is updated at most once per minute per token, with a
+conditional update to avoid duplicate writes from concurrent requests. This
+timestamp may lag actual use by less than a minute.
+
+Successful task heartbeats still renew both task and sync-run leases on every
+request. Their routine log entries are disabled by default; set
+`PARSER_LOG_HEARTBEATS=true` to enable a debug entry (the configured log level must
+also allow debug). Rejected lease renewals keep their HTTP 409 response and emit
+a warning. No heartbeat interval, retry policy or parser protocol changes.
+
+`/load` and scheduled reports classify internal task heartbeats, partial results,
+completion, parser logs and uploads separately. Old minute files retain their
+previous combined category; totals are not counted twice. Warnings also have
+fixed categories and a classified/total coverage count during rollout. These
+metrics store neither raw warning messages nor request paths or credentials.
+Deploy the backend and refresh cached configuration with `php artisan config:cache`
+if configuration caching is used. No migration or parser update is required for
+these changes. Compare complete periods after deployment; this reduces database
+writes and routine logging, but the measured PHP CPU reduction must be verified.
+
 ### Updating OpenSky credentials
 
 The profile has an OpenSky connection form at `/profile#opensky`. Authenticated active users with an existing connection can update their own portal login/password through `PATCH /api/account/portal-credentials`; password confirmation is required. Passwords retain leading/trailing spaces and are encrypted at rest. No password or ciphertext is returned in the account response. A save queues roster refresh immediately, or requests a follow-up when an older job is already running. It does not claim that the portal has accepted the new password. For accounts using portal credentials to sign in to OSCalendar, the newly saved credentials also become their OSCalendar login; separate local credentials remain unchanged.

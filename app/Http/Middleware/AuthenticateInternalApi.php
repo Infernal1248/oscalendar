@@ -39,7 +39,15 @@ class AuthenticateInternalApi
             abort(401, 'Invalid internal API token.');
         }
 
-        $token->forceFill(['last_used_at' => now()])->save();
+        // Authentication/revocation is checked above on every request. Only the
+        // informational last-use timestamp is coalesced; no authorization cache.
+        $usedAt = now();
+        $cutoff = $usedAt->copy()->subMinute();
+        if (! $token->last_used_at || $token->last_used_at->lte($cutoff)) {
+            InternalApiToken::whereKey($token->id)
+                ->where(fn ($query) => $query->whereNull('last_used_at')->orWhere('last_used_at', '<=', $cutoff))
+                ->update(['last_used_at' => $usedAt]);
+        }
         $request->attributes->set('internal_api_token_id', $token->id);
 
         return $next($request);

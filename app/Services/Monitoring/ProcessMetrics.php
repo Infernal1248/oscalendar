@@ -13,6 +13,7 @@ class ProcessMetrics
     private string $addressGroup = 'other';
     private int $errors = 0;
     private int $warnings = 0;
+    private array $warningCategories = [];
     private int $failures = 0;
     private bool $finished = false;
 
@@ -29,6 +30,15 @@ class ProcessMetrics
             $request->is('api/internal/parser-jobs/claim') => 'http:claim',
             $request->is('api/internal/parser-nodes/heartbeat') => 'http:node-heartbeat',
             $request->is('api/internal/monitor/*') => 'http:monitor',
+            $request->is('api/internal/parser-jobs/*/heartbeat') => 'http:job-heartbeat',
+            $request->is('api/internal/sync-runs/*/partial-result') => 'http:partial-result',
+            $request->is('api/internal/sync-runs/*/finish') => 'http:sync-finish',
+            $request->is('api/internal/sync-runs/*/log') => 'http:sync-log',
+            $request->is('api/internal/sync-runs/start') => 'http:sync-start',
+            $request->is('api/internal/sync-runs/*/checks') => 'http:checks-result',
+            $request->is('api/internal/sync-runs/*/flight-report') => 'http:flight-report',
+            $request->is('api/internal/sync-runs/*/documents') => 'http:documents',
+            $request->is('api/internal/sync-result') => 'http:sync-result',
             $request->is('api/internal/*') => 'http:parser-results',
             $request->is('api/telegram/*') => 'http:telegram',
             default => 'http:other',
@@ -40,7 +50,7 @@ class ProcessMetrics
     public function command(CommandFinished $event): void
     {
         $known = ['schedule:run', 'schedule:finish', 'monitor:check', 'telegram:notify-roster',
-            'checks:notify', 'push:send', 'flight-documents:prune'];
+            'checks:notify', 'push:send', 'flight-documents:prune', 'flight-reports:schedule', 'flight-reports:prune'];
         // The outer command finishes last; nested calls are not counted twice.
         $this->group = 'cli:'.(in_array($event->command, $known, true) ? $event->command : 'other');
         if ($event->exitCode !== 0) $this->failures++;
@@ -49,7 +59,11 @@ class ProcessMetrics
     public function log(MessageLogged $event): void
     {
         if (in_array($event->level, ['emergency', 'alert', 'critical', 'error'], true)) $this->errors++;
-        if ($event->level === 'warning') $this->warnings++;
+        if ($event->level === 'warning') {
+            $this->warnings++;
+            $category = WarningCategories::classify($event->message);
+            $this->warningCategories[$category] = ($this->warningCategories[$category] ?? 0) + 1;
+        }
     }
 
     public static function cpu(?array $usage): ?float
@@ -76,6 +90,7 @@ class ProcessMetrics
                 'http_4xx' => $this->status >= 400 && $this->status < 500 ? 1 : 0,
                 'http_status' => $this->status, 'http_address_group' => $this->addressGroup,
                 'errors' => $this->errors + (int) $fatal, 'warnings' => $this->warnings, 'failed' => $this->failures,
+                'warning_categories' => $this->warningCategories,
             ]);
         } catch (\Throwable $exception) {
             // Telemetry is best effort and never changes an application's outcome.

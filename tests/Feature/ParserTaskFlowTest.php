@@ -479,6 +479,32 @@ class ParserTaskFlowTest extends TestCase
         }
     }
 
+    public function test_successful_heartbeat_renews_lease_without_routine_log_writes(): void
+    {
+        Carbon::setTestNow('2026-09-09 12:00:00');
+        $user = User::create(['display_name' => 'Heartbeat logging']);
+        PortalCredential::create([
+            'user_id' => $user->id, 'portal' => 'rossiya_edu', 'login' => 'test',
+            'password_encrypted' => Crypt::encryptString('test'), 'status' => 'active',
+        ]);
+        $job = $this->claim()->assertOk()->json('job');
+        $url = '/api/internal/parser-jobs/'.$job['sync_run_id'].'/heartbeat';
+        $worker = 'vm-1:worker-'.$job['sync_run_id'];
+        \Illuminate\Support\Facades\Log::spy();
+        config(['parser.log_heartbeats' => false]);
+        $this->travel(30)->seconds();
+        $this->withToken($this->token)->postJson($url, ['locked_by' => $worker, 'lock_seconds' => 120])->assertOk();
+        $this->assertTrue(SyncRun::findOrFail($job['sync_run_id'])->lock_expires_at->equalTo(now()->addSeconds(120)));
+        $this->assertTrue(ParserTask::findOrFail($job['task_id'])->lock_expires_at->equalTo(now()->addSeconds(120)));
+        \Illuminate\Support\Facades\Log::shouldNotHaveReceived('info');
+        \Illuminate\Support\Facades\Log::shouldNotHaveReceived('debug');
+        config(['parser.log_heartbeats' => true]);
+        $this->postJson($url, ['locked_by' => $worker])->assertOk();
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('debug')->once();
+        $this->postJson($url, ['locked_by' => 'another-worker'])->assertStatus(409);
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('warning')->once()->with('Parser job heartbeat rejected', ['sync_run_id' => $job['sync_run_id']]);
+    }
+
     private function sendRosterChunk(array $job, User $user, array $item, array $changeState): void
     {
         $this->withToken($this->token)
