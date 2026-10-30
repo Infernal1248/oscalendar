@@ -89,6 +89,11 @@ class User extends Authenticatable
             ->where('ends_at', '>=', now('UTC')->startOfDay())->exists());
     }
 
+    public function hasFlightTimeAccess(): bool
+    {
+        return $this->status === 'active' && ($this->isAdmin() || (int) $this->id === 2);
+    }
+
     public function hasStatisticsAccess(): bool
     {
         return $this->hasReportsAccess();

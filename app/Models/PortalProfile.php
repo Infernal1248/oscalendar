@@ -29,6 +29,7 @@ class PortalProfile extends Model
         }
         if ($profile->personnel_number !== $data['personnel_number']
             || static::normalizeName($profile->full_name ?? '') !== static::normalizeName($data['full_name'])) {
+            $profile->nalet_user_id = null;
             $profile->position = null;
             $profile->photo_base64 = null;
             $profile->photo_mime = null;

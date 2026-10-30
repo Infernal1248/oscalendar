@@ -102,7 +102,7 @@ class SyncFailureReport
     {
         return match ($type) {
             'flight_details' => 'Детали рейса', 'roster_refresh' => 'Рабочий план',
-            'checks_refresh' => 'Допуски', 'acknowledge_roster_changes' => 'Ознакомление с изменениями',
+            'checks_refresh' => 'Допуски', 'flight_time' => 'Налёт', 'acknowledge_roster_changes' => 'Ознакомление с изменениями',
             default => 'Синхронизация',
         };
     }

@@ -32,6 +32,7 @@ class ParserJobService
             $supportsReports = in_array('flight_reports_v1', $options['capabilities'] ?? [], true);
             $supportsChecks = in_array('checks_v1', $options['capabilities'] ?? [], true);
             $supportsCertificates = in_array('check_certificates_v1', $options['capabilities'] ?? [], true);
+            $supportsFlightTime = in_array('flight_time_v1', $options['capabilities'] ?? [], true);
             $now = now();
 
             $this->scheduler->ensureRosterTasks($source, $portal);
@@ -48,7 +49,8 @@ class ParserJobService
                 $supportsRosterAcknowledgement,
                 $supportsChecks,
                 $supportsReports,
-                $supportsCertificates
+                $supportsCertificates,
+                $supportsFlightTime
             );
             if (! $claimed) {
                 return null;
@@ -133,7 +135,8 @@ class ParserJobService
         bool $supportsRosterAcknowledgement,
         bool $supportsChecks,
         bool $supportsReports,
-        bool $supportsCertificates
+        bool $supportsCertificates,
+        bool $supportsFlightTime
     ): ?array {
         $excludedUsers = [];
         $excludedTaskIds = [];
@@ -157,6 +160,7 @@ class ParserJobService
                 ->orderBy('parser_tasks.next_run_at')
                 ->orderBy('parser_tasks.id');
 
+            if (! $supportsFlightTime) $query->where('parser_tasks.task_type', '!=', 'flight_time');
             if (! $supportsCertificates) $query->where('parser_tasks.task_type', '!=', 'checks_confirm_certificate');
             if (! $supportsReports) $query->where('parser_tasks.task_type', '!=', 'flight_report');
             if (! $supportsChecks) $query->where('parser_tasks.task_type', '!=', 'checks_refresh');
@@ -221,6 +225,12 @@ class ParserJobService
                 continue;
             }
 
+            if ($task->task_type === 'flight_time' && SyncRun::where('user_id', $task->user_id)
+                ->where('task_type', 'flight_time')->where('status', 'running')->where('lock_expires_at', '>', $now)->exists()) {
+                $excludedTaskIds[] = $task->id;
+                continue;
+            }
+
             $taskPayload = $this->taskPayload($task);
             if ($taskPayload === null) {
                 $task->forceFill(['status' => 'completed', 'next_run_at' => null])->save();
@@ -270,6 +280,19 @@ class ParserJobService
                     $month->copy()->addMonth()->format('Y-m'),
                 ],
             ];
+        }
+
+        if ($task->task_type === 'flight_time') {
+            $payload = $task->payload ?? [];
+            if ($payload['rolling_days'] ?? false) {
+                $today = now('UTC')->startOfDay();
+                $payload['date_from'] = $today->copy()->subDays(6)->toDateString();
+                $payload['date_to'] = $today->toDateString();
+            }
+            $profile = $task->user?->portalProfile;
+            $payload['nalet_user_id'] = $profile?->nalet_user_id;
+            $payload['portal_identity'] = $profile ? ['full_name' => $profile->full_name, 'personnel_number' => $profile->personnel_number] : null;
+            return $payload;
         }
 
         if ($task->task_type === 'checks_confirm_certificate') {

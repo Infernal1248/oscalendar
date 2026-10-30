@@ -89,6 +89,10 @@ class SyncRunController extends Controller
                 throw new ConflictHttpException('The sync run cannot be finished from its current status.');
             }
 
+            if ($syncRun->task_type === 'flight_time' && $data['status'] === 'finished' && ! ($syncRun->stats['flight_time_hash'] ?? null)) {
+                throw new ConflictHttpException('Flight time snapshot has not been received.');
+            }
+
             $finishedAt = isset($data['finished_at'])
                 ? Carbon::parse($data['finished_at'])->utc()
                 : now();

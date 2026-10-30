@@ -200,7 +200,11 @@ class ParserTaskScheduler
             $attributes['last_error_at'] = null;
             $attributes['last_error_text'] = null;
 
-            if ($task->task_type === 'flight_report') {
+            if ($task->task_type === 'flight_time') {
+                $rolling = (bool) ($task->payload['rolling_days'] ?? false);
+                $attributes['status'] = $rolling ? 'scheduled' : 'completed';
+                $attributes['next_run_at'] = $rolling ? $finishedAt->copy()->addDay() : null;
+            } elseif ($task->task_type === 'flight_report') {
                 // Check late/corrected reports daily for one week; backfill also gets a week.
                 $until = Carbon::parse($task->payload['report_retry_until'] ?? $task->created_at->copy()->addDays(7));
                 $attributes['status'] = $finishedAt->lt($until) ? 'scheduled' : 'completed';

@@ -13,6 +13,7 @@ class Kernel extends ConsoleKernel
             ->when(fn () => app(\App\Services\PortalAuthNotifications::class)->due()->exists());
         $schedule->command('checks:notify')->everyFiveMinutes()->withoutOverlapping(10)->runInBackground()
             ->when(fn () => app(\App\Services\PilotCheckReminderQueue::class)->shouldRun());
+        $schedule->command('flight-time:schedule')->hourly()->withoutOverlapping(60);
         $schedule->command('flight-reports:schedule')->hourly()->withoutOverlapping(60);
         $schedule->command('flight-reports:prune')->daily()->withoutOverlapping(60);
         $schedule->command('flight-documents:prune')->hourly()->withoutOverlapping(60);
