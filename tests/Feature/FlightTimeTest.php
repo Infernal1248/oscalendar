@@ -100,6 +100,53 @@ class FlightTimeTest extends TestCase
         $this->assertSame('2026-10-23', ParserTask::where('task_key', "flight_time:rossiya_edu:user:{$this->tester->id}:2026-10")->sole()->payload['date_to']);
     }
 
+    public function test_manual_backfill_creates_24_months_only_for_user_nine_and_does_not_requeue_existing_tasks(): void
+    {
+        $user = User::forceCreate(['id' => 9, 'status' => 'active']);
+        PortalCredential::create(['user_id' => 9, 'portal' => 'rossiya_edu', 'login' => 'user-9',
+            'password_encrypted' => Crypt::encryptString('test'), 'status' => 'active']);
+        $this->seedRows($user, [$this->row('2020-01-01')]);
+        $arguments = ['user_id' => 9, 'from' => '2018-01', 'to' => '2019-12'];
+        $this->assertSame(0, Artisan::call('flight-time:backfill', $arguments));
+        $this->assertSame(24, ParserTask::count());
+        $this->assertSame(24, ParserTask::where('user_id', 9)->where('status', 'scheduled')->count());
+        $first = ParserTask::where('task_key', 'flight_time:rossiya_edu:user:9:2018-01')->sole();
+        $last = ParserTask::where('task_key', 'flight_time:rossiya_edu:user:9:2019-12')->sole();
+        $this->assertSame(['date_from' => '2018-01-01', 'date_to' => '2018-01-31', 'history' => true], $first->payload);
+        $this->assertSame(['date_from' => '2019-12-01', 'date_to' => '2019-12-31', 'history' => true], $last->payload);
+        $first->update(['status' => 'completed', 'next_run_at' => null]);
+        $this->assertSame(0, Artisan::call('flight-time:backfill', $arguments));
+        $this->assertSame('completed', $first->fresh()->status);
+        $this->assertSame(24, ParserTask::count());
+        $this->assertSame(1, FlightTimeEntry::count());
+        ParserTask::create(['task_key' => 'roster_refresh:rossiya_edu:user:9', 'user_id' => 9,
+            'source' => 'rossiya_edu', 'portal' => 'rossiya_edu', 'task_type' => 'roster_refresh', 'status' => 'paused']);
+        $job = $this->claim($user);
+        $this->assertSame('2018-02-01', $job['task_payload']['date_from']);
+        $this->assertTrue($job['task_payload']['history']);
+        $run = SyncRun::findOrFail($job['sync_run_id']);
+        $this->upload($run, $this->snapshot([$this->row('2018-02-05')], '2018-02-01', '2018-02-28'))->assertOk();
+        $this->withToken('internal-test')->postJson('/api/internal/sync-runs/'.$run->id.'/finish', ['status' => 'finished'])->assertOk();
+        $this->assertSame('completed', ParserTask::find($job['task_id'])->status);
+        $this->assertDatabaseHas('flight_time_entries', ['user_id' => 9, 'entry_date' => '2018-02-05']);
+        Artisan::call('flight-time:schedule');
+        $this->assertSame(107, ParserTask::where('user_id', 9)->where('task_type', 'flight_time')->count());
+        $this->assertSame(83, ParserTask::where('user_id', $this->tester->id)->where('task_type', 'flight_time')->count());
+    }
+
+    public function test_manual_backfill_rejects_invalid_dates_and_inactive_or_missing_connections(): void
+    {
+        foreach ([['from' => '2017-12'], ['from' => '2019-13'], ['from' => '2019-12', 'to' => '2019-01'],
+            ['to' => '2026-10'], ['user_id' => 999], ['user_id' => 'all']] as $override) {
+            $this->assertSame(1, Artisan::call('flight-time:backfill', array_replace([
+                'user_id' => $this->ordinary->id, 'from' => '2018-01', 'to' => '2019-12',
+            ], $override)));
+        }
+        PortalCredential::where('user_id', $this->ordinary->id)->update(['status' => 'disabled']);
+        $this->assertSame(1, Artisan::call('flight-time:backfill', ['user_id' => $this->ordinary->id, 'from' => '2018-01', 'to' => '2019-12']));
+        $this->assertSame(0, ParserTask::count());
+    }
+
     public function test_page_and_api_are_restricted_to_admin_and_user_two_and_always_scope_to_the_viewer(): void
     {
         $this->assertSame(2, $this->tester->id);

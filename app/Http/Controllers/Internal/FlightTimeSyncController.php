@@ -13,7 +13,7 @@ class FlightTimeSyncController extends Controller
     {
         $fields = ['entry_date', 'row_position', 'flight_number', 'description', 'flight_assignment_number', 'source_payload', ...FlightTimeEntry::MINUTES];
         $rules = [
-            'date_from' => ['required', 'date_format:Y-m-d', 'after_or_equal:2020-01-01'],
+            'date_from' => ['required', 'date_format:Y-m-d', 'after_or_equal:2018-01-01'],
             'date_to' => ['required', 'date_format:Y-m-d', 'after_or_equal:date_from'],
             'nalet_user_id' => ['required', 'string', 'regex:/\A[1-9][0-9]{0,19}\z/'],
             'portal_identity' => ['required', 'array:full_name,personnel_number'],
