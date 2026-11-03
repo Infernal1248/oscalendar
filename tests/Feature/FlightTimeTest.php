@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\{FlightTimeEntry, InternalApiToken, ParserTask, PortalCredential, PortalProfile, SyncRun, User};
+use App\Models\{FlightTimeEntry, FlightTimeOpeningBalance, InternalApiToken, ParserTask, PortalCredential, PortalProfile, SyncRun, User};
 use Illuminate\Support\Facades\{Artisan, Crypt, DB, Http};
 use Tests\TestCase;
 
@@ -145,6 +145,73 @@ class FlightTimeTest extends TestCase
         PortalCredential::where('user_id', $this->ordinary->id)->update(['status' => 'disabled']);
         $this->assertSame(1, Artisan::call('flight-time:backfill', ['user_id' => $this->ordinary->id, 'from' => '2018-01', 'to' => '2019-12']));
         $this->assertSame(0, ParserTask::count());
+    }
+
+    public function test_opening_balances_are_private_replaceable_and_added_only_to_the_global_summary(): void
+    {
+        $this->seedRows($this->tester, [array_replace($this->row(), ['actual_night_minutes' => 30, 'actual_work_minutes' => 300])]);
+        $this->seedRows($this->ordinary, [$this->row('2020-01-01', 1, 999)]);
+        $payload = ['flight_time' => '959:46', 'airborne_time' => '787:26', 'night_time' => '334:36', 'covered_until' => '2020-11-30'];
+        $this->patchJson('/api/flight-time/opening-balance', $payload)->assertUnauthorized();
+        $this->actingAs($this->ordinary, 'sanctum')->patchJson('/api/flight-time/opening-balance', $payload)->assertForbidden();
+        $this->actingAs($this->tester, 'sanctum')->patchJson('/api/flight-time/opening-balance', $payload)->assertOk()
+            ->assertJsonPath('opening_balance.flight_minutes', 57586)->assertJsonPath('opening_balance.airborne_minutes', 47246)
+            ->assertJsonPath('opening_balance.night_minutes', 20076)->assertJsonPath('opening_balance.covered_until', '2020-11-30')
+            ->assertJsonPath('all_time_totals.actual_flight_minutes', 57739)->assertJsonPath('all_time_totals.actual_night_minutes', 20106)
+            ->assertJsonPath('portal_totals.actual_flight_minutes', 153)->assertJsonPath('all_time_totals.flights', 1);
+        $this->patchJson('/api/flight-time/opening-balance', $payload)->assertOk()->assertJsonPath('all_time_totals.actual_flight_minutes', 57739);
+        $this->assertSame(1, FlightTimeOpeningBalance::count());
+        $this->getJson('/api/flight-time?date_from=2027-01-01')->assertOk()->assertJsonPath('total', 0)
+            ->assertJsonPath('all_time_totals.actual_flight_minutes', 57739)->assertJsonPath('opening_balance.airborne_minutes', 47246);
+        $this->getJson('/api/flight-time?per_page=1&group_by=entry_month')->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('totals.actual_flight_minutes', 153)->assertJsonPath('group_totals.0.totals.actual_flight_minutes', 153)
+            ->assertJsonPath('all_time_totals.actual_work_minutes', 300);
+        $this->upload($this->newRun(), $this->snapshot([$this->row('2026-10-30', 1, 160)]))->assertOk();
+        $this->actingAs($this->tester, 'sanctum')->getJson('/api/flight-time')->assertOk()
+            ->assertJsonPath('all_time_totals.actual_flight_minutes', 57746)->assertJsonPath('opening_balance.flight_minutes', 57586);
+        $this->actingAs($this->admin, 'sanctum')->getJson('/api/flight-time')->assertOk()
+            ->assertJsonPath('all_time_totals.actual_flight_minutes', 0)->assertJsonPath('opening_balance.airborne_minutes', null);
+    }
+
+    public function test_opening_flight_count_is_added_once_preserved_by_older_clients_and_clearable(): void
+    {
+        $this->seedRows($this->tester, [$this->row()]);
+        $this->actingAs($this->tester, 'sanctum');
+        $payload = ['flight_time' => null, 'airborne_time' => null, 'night_time' => null, 'covered_until' => null, 'flights' => 482];
+        $this->patchJson('/api/flight-time/opening-balance', $payload)->assertOk()
+            ->assertJsonPath('opening_balance.flights', 482)->assertJsonPath('portal_totals.flights', 1)
+            ->assertJsonPath('all_time_totals.flights', 483);
+        $this->patchJson('/api/flight-time/opening-balance', $payload)->assertOk()->assertJsonPath('all_time_totals.flights', 483);
+        unset($payload['flights']);
+        $this->patchJson('/api/flight-time/opening-balance', $payload)->assertOk()->assertJsonPath('opening_balance.flights', 482);
+        $this->getJson('/api/flight-time?date_from=2027-01-01')->assertOk()->assertJsonPath('total', 0)->assertJsonPath('all_time_totals.flights', 483);
+        foreach ([-1, 1.5, 'invalid'] as $value) {
+            $this->patchJson('/api/flight-time/opening-balance', $payload + ['flights' => $value])->assertUnprocessable();
+        }
+        $this->assertSame(482, FlightTimeOpeningBalance::sole()->flights);
+        $this->patchJson('/api/flight-time/opening-balance', $payload + ['flights' => 0])->assertOk()
+            ->assertJsonPath('opening_balance.flights', 0)->assertJsonPath('all_time_totals.flights', 1);
+        $this->patchJson('/api/flight-time/opening-balance', $payload + ['flights' => null])->assertOk()
+            ->assertJsonPath('opening_balance.flights', null)->assertJsonPath('all_time_totals.flights', 1);
+        $this->assertSame(1, FlightTimeEntry::count());
+    }
+
+    public function test_opening_balance_validation_and_clearing_preserve_portal_records(): void
+    {
+        $this->seedRows($this->tester, [$this->row()]);
+        $this->actingAs($this->tester, 'sanctum');
+        $payload = ['flight_time' => '1:00', 'airborne_time' => '0:45', 'night_time' => '0:00', 'covered_until' => null];
+        foreach ([['flight_time' => '-1:00'], ['night_time' => '0:60'], ['airborne_time' => '1.5'],
+            ['covered_until' => '2030-01-01'], ['user_id' => $this->ordinary->id]] as $override) {
+            $this->patchJson('/api/flight-time/opening-balance', array_replace($payload, $override))->assertUnprocessable();
+        }
+        $this->assertSame(0, FlightTimeOpeningBalance::count());
+        $this->patchJson('/api/flight-time/opening-balance', $payload)->assertOk()
+            ->assertJsonPath('opening_balance.night_minutes', 0)->assertJsonPath('all_time_totals.actual_flight_minutes', 213);
+        $this->patchJson('/api/flight-time/opening-balance', array_fill_keys(array_keys($payload), null))->assertOk()
+            ->assertJsonPath('opening_balance.airborne_minutes', null)->assertJsonPath('all_time_totals.actual_flight_minutes', 153);
+        $this->assertSame(1, FlightTimeEntry::count());
+        $this->assertSame(1, FlightTimeOpeningBalance::count());
     }
 
     public function test_page_and_api_are_restricted_to_admin_and_user_two_and_always_scope_to_the_viewer(): void

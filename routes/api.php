@@ -34,6 +34,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/pilot-checks/{id}', [\App\Http\Controllers\PilotCheckController::class, 'destroy'])->whereNumber('id');
     Route::get('/flight-time/metadata', [\App\Http\Controllers\FlightTimeController::class, 'metadata']);
     Route::get('/flight-time', [\App\Http\Controllers\FlightTimeController::class, 'index']);
+    Route::patch('/flight-time/opening-balance', [\App\Http\Controllers\FlightTimeController::class, 'saveOpeningBalance'])->middleware('throttle:20,1');
     Route::get('/statistics', [\App\Http\Controllers\FlightStatisticsController::class, 'index']);
     Route::get('/statistics/reports/{flightReport}/file', [\App\Http\Controllers\FlightStatisticsController::class, 'download']);
     Route::get('/statistics/reports/{flightReport}', [\App\Http\Controllers\FlightStatisticsController::class, 'show']);

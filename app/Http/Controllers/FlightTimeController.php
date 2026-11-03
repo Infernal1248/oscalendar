@@ -2,13 +2,50 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\FlightTimeEntry;
+use App\Models\{FlightTimeEntry, FlightTimeOpeningBalance, User};
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class FlightTimeController extends Controller
 {
+    public function saveOpeningBalance(Request $request)
+    {
+        abort_unless($request->user()->hasFlightTimeAccess(), 403);
+        $rules = ['user_id' => ['prohibited'], 'covered_until' => ['present', 'nullable', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'flights' => ['sometimes', 'nullable', 'integer', 'min:0', 'max:10000000']];
+        foreach (['flight_time', 'airborne_time', 'night_time'] as $field) {
+            $rules[$field] = ['present', 'nullable', 'string', 'regex:/\A[0-9]{1,7}:[0-5][0-9]\z/'];
+        }
+        $data = $request->validate($rules);
+        $values = ['covered_until' => $data['covered_until']];
+        if (array_key_exists('flights', $data)) $values['flights'] = $data['flights'];
+        foreach (['flight' => 'flight_minutes', 'airborne' => 'airborne_minutes', 'night' => 'night_minutes'] as $input => $column) {
+            $parts = $data[$input.'_time'] === null ? null : explode(':', $data[$input.'_time']);
+            $values[$column] = $parts === null ? null : (int) $parts[0] * 60 + (int) $parts[1];
+        }
+        DB::transaction(function () use ($request, $values) {
+            $user = User::whereKey($request->user()->id)->lockForUpdate()->firstOrFail();
+            abort_unless($user->hasFlightTimeAccess(), 403);
+            FlightTimeOpeningBalance::updateOrCreate(['user_id' => $request->user()->id], $values);
+        }, 3);
+        return response()->json($this->summary($request->user()))->header('Cache-Control', 'private, no-store');
+    }
+
+    private function summary(User $user): array
+    {
+        $sums = implode(', ', array_map(fn ($field) => "SUM({$field}) AS {$field}", FlightTimeEntry::MINUTES));
+        $summary = FlightTimeEntry::where('user_id', $user->id)->selectRaw($sums.", SUM(CASE WHEN flight_number IS NOT NULL AND flight_number <> '' AND actual_flight_minutes IS NOT NULL THEN 1 ELSE 0 END) AS flights")->first();
+        $portalTotals = [];
+        foreach ([...FlightTimeEntry::MINUTES, 'flights'] as $field) $portalTotals[$field] = (int) $summary->{$field};
+        $opening = (FlightTimeOpeningBalance::find($user->id) ?? new FlightTimeOpeningBalance)->values();
+        $combined = $portalTotals;
+        $combined['actual_flight_minutes'] += $opening['flight_minutes'] ?? 0;
+        $combined['actual_night_minutes'] += $opening['night_minutes'] ?? 0;
+        $combined['flights'] += $opening['flights'] ?? 0;
+        return ['all_time_totals' => $combined, 'portal_totals' => $portalTotals, 'opening_balance' => $opening];
+    }
+
     public function metadata(Request $request)
     {
         abort_unless($request->user()->hasFlightTimeAccess(), 403);
@@ -49,10 +86,8 @@ class FlightTimeController extends Controller
         // Test access does not grant access to another employee's records.
         $query = FlightTimeEntry::where('user_id', $request->user()->id);
         $sums = implode(', ', array_map(fn ($field) => "SUM({$field}) AS {$field}", FlightTimeEntry::MINUTES));
-        // The summary covers the owner's full history, independently of table filters and pagination.
-        $summary = (clone $query)->selectRaw($sums.", SUM(CASE WHEN flight_number IS NOT NULL AND flight_number <> '' AND actual_flight_minutes IS NOT NULL THEN 1 ELSE 0 END) AS flights")->first();
-        $allTimeTotals = [];
-        foreach ([...FlightTimeEntry::MINUTES, 'flights'] as $field) $allTimeTotals[$field] = (int) $summary->{$field};
+        // Opening balances affect only the summary, never table rows or filtered totals.
+        $summary = $this->summary($request->user());
         if (! empty($data['date_from'])) $query->where('entry_date', '>=', $data['date_from']);
         if (! empty($data['date_to'])) $query->where('entry_date', '<=', $data['date_to']);
         foreach ($data['filter_rules'] ?? [] as $column => $filter) {
@@ -97,7 +132,7 @@ class FlightTimeController extends Controller
                 ->selectRaw("{$expression} AS group_value, {$sums}")->groupByRaw($expression)->get();
             $groupTotals = $groups->map(fn ($row) => ['value' => $row->group_value, 'totals' => $row->only(FlightTimeEntry::MINUTES)])->all();
         }
-        return response()->json(array_merge($page->toArray(), ['totals' => $totals, 'all_time_totals' => $allTimeTotals, 'group_totals' => $groupTotals]))
+        return response()->json(array_merge($page->toArray(), $summary, ['totals' => $totals, 'group_totals' => $groupTotals]))
             ->header('Cache-Control', 'private, no-store');
     }
 }
