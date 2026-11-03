@@ -201,6 +201,68 @@ class FlightTimeTest extends TestCase
         $this->assertSame('2026-10-31', $next['task_payload']['date_to']);
     }
 
+    public function test_signed_work_durations_are_saved_summed_and_filtered_without_losing_original_cells(): void
+    {
+        $first = array_replace($this->row('2024-06-18', 1, 10), ['actual_work_minutes' => 510, 'forecast_air_work_minutes' => 510]);
+        $second = array_replace($this->row('2024-06-18', 2, 115), ['actual_work_minutes' => -10, 'forecast_air_work_minutes' => -10]);
+        $second['source_payload'][5] = '-01,50';
+        $run = $this->newRun(null, '2024-06-18', '2024-06-18');
+        $this->upload($run, $this->snapshot([$first, $second], '2024-06-18', '2024-06-18'))->assertOk();
+        $stored = FlightTimeEntry::where('row_position', 2)->sole();
+        $this->assertSame(-10, $stored->actual_work_minutes);
+        $this->assertSame('-01,50', $stored->source_payload[5]);
+        $this->assertSame(500, $run->fresh()->stats['flight_time_totals']['actual_work_minutes']);
+
+        $this->actingAs($this->tester, 'sanctum')->getJson('/api/flight-time?group_by=entry_month&sort_by=actual_work_minutes&sort_order=asc')
+            ->assertOk()->assertJsonPath('data.0.actual_work_minutes', -10)
+            ->assertJsonPath('totals.actual_work_minutes', 500)->assertJsonPath('all_time_totals.actual_work_minutes', 500);
+        foreach (['-0:10', '−0:10', '-10'] as $value) {
+            $query = http_build_query(['group_by' => 'entry_month', 'filter_rules' => ['actual_work_minutes' => ['operator' => 'and',
+                'constraints' => [['matchMode' => 'equals', 'value' => $value]]]]]);
+            $this->getJson('/api/flight-time?'.$query)->assertOk()->assertJsonPath('total', 1)
+                ->assertJsonPath('totals.actual_work_minutes', -10)->assertJsonPath('group_totals.0.totals.actual_work_minutes', -10)
+                ->assertJsonPath('all_time_totals.actual_work_minutes', 500);
+        }
+    }
+
+    public function test_negative_totals_are_accepted_but_wrong_totals_preserve_previous_rows(): void
+    {
+        $this->seedRows($this->tester, [$this->row()]);
+        $negative = array_replace($this->row(), ['actual_work_minutes' => -10, 'forecast_air_work_minutes' => -10]);
+        $run = $this->newRun();
+        $snapshot = $this->snapshot([$negative]);
+        $wrong = $snapshot; $wrong['totals']['actual_work_minutes'] = -11;
+        $this->upload($run, $wrong)->assertUnprocessable();
+        $this->assertNull(FlightTimeEntry::sole()->actual_work_minutes);
+        $this->upload($run, $snapshot)->assertOk();
+        $this->assertSame(-10, FlightTimeEntry::sole()->actual_work_minutes);
+        $this->assertSame(-10, $run->fresh()->stats['flight_time_totals']['actual_work_minutes']);
+        $this->actingAs($this->tester, 'sanctum')->getJson('/api/flight-time')->assertOk()
+            ->assertJsonPath('all_time_totals.actual_work_minutes', -10)->assertJsonPath('totals.actual_work_minutes', -10);
+    }
+
+    public function test_all_time_summary_ignores_period_filters_and_pagination_and_excludes_other_users(): void
+    {
+        $this->seedRows($this->tester, [
+            array_replace($this->row('2020-01-01', 1, 60), ['actual_night_minutes' => 15, 'actual_work_minutes' => 100]),
+            array_replace($this->row('2026-10-30', 1, 153), ['actual_night_minutes' => 30, 'actual_work_minutes' => 200]),
+            array_replace($this->row('2026-10-30', 2), ['flight_number' => null, 'actual_flight_minutes' => null, 'actual_work_minutes' => 50]),
+            array_replace($this->row('2026-10-30', 3), ['actual_flight_minutes' => null, 'planned_flight_minutes' => 40]),
+        ]);
+        $this->seedRows($this->ordinary, [$this->row('2020-01-01', 1, 999)]);
+        $query = http_build_query(['date_from' => '2026-10-01', 'date_to' => '2026-10-31', 'per_page' => 1,
+            'group_by' => 'entry_month', 'sort_by' => 'actual_flight_minutes',
+            'filter_rules' => ['actual_flight_minutes' => ['operator' => 'and', 'constraints' => [['matchMode' => 'gte', 'value' => '2:00']]]]]);
+        $this->actingAs($this->tester, 'sanctum')->getJson('/api/flight-time?'.$query)->assertOk()
+            ->assertJsonCount(1, 'data')->assertJsonPath('total', 1)->assertJsonPath('totals.actual_flight_minutes', 153)
+            ->assertJsonPath('all_time_totals.actual_flight_minutes', 213)->assertJsonPath('all_time_totals.actual_night_minutes', 45)
+            ->assertJsonPath('all_time_totals.actual_work_minutes', 350)->assertJsonPath('all_time_totals.flights', 2);
+        $this->getJson('/api/flight-time?date_from=2027-01-01')->assertOk()->assertJsonPath('total', 0)
+            ->assertJsonPath('all_time_totals.actual_flight_minutes', 213)->assertJsonPath('all_time_totals.flights', 2);
+        $empty = $this->actingAs($this->admin, 'sanctum')->getJson('/api/flight-time')->assertOk();
+        foreach ([...FlightTimeEntry::MINUTES, 'flights'] as $field) $empty->assertJsonPath('all_time_totals.'.$field, 0);
+    }
+
     public function test_page_size_can_exceed_500_and_all_respects_filters_and_own_user(): void
     {
         $this->seedRows($this->tester, array_map(fn ($position) => $this->row('2026-10-30', $position, 1), range(1, 501)));

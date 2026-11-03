@@ -43,11 +43,16 @@ class FlightTimeController extends Controller
                 ? ['equals', 'notEquals', 'lt', 'lte', 'gt', 'gte']
                 : ['contains', 'notContains', 'startsWith', 'endsWith', 'equals', 'notEquals'])];
             $rules["filter_rules.{$column}.constraints.*.value"] = $column === 'entry_date' ? ['required', 'date_format:Y-m-d']
-                : ($minutes ? ['required', 'regex:/\A[0-9]{1,7}(?::[0-5][0-9])?\z/'] : ['required', 'string', 'max:255']);
+                : ($minutes ? ['required', 'regex:/\A[+−-]?[0-9]{1,7}(?::[0-5][0-9])?\z/u'] : ['required', 'string', 'max:255']);
         }
         $data = $request->validate($rules);
         // Test access does not grant access to another employee's records.
         $query = FlightTimeEntry::where('user_id', $request->user()->id);
+        $sums = implode(', ', array_map(fn ($field) => "SUM({$field}) AS {$field}", FlightTimeEntry::MINUTES));
+        // The summary covers the owner's full history, independently of table filters and pagination.
+        $summary = (clone $query)->selectRaw($sums.", SUM(CASE WHEN flight_number IS NOT NULL AND flight_number <> '' AND actual_flight_minutes IS NOT NULL THEN 1 ELSE 0 END) AS flights")->first();
+        $allTimeTotals = [];
+        foreach ([...FlightTimeEntry::MINUTES, 'flights'] as $field) $allTimeTotals[$field] = (int) $summary->{$field};
         if (! empty($data['date_from'])) $query->where('entry_date', '>=', $data['date_from']);
         if (! empty($data['date_to'])) $query->where('entry_date', '<=', $data['date_to']);
         foreach ($data['filter_rules'] ?? [] as $column => $filter) {
@@ -55,8 +60,11 @@ class FlightTimeController extends Controller
                 foreach ($filter['constraints'] as $constraint) {
                     $value = $constraint['value'];
                     if (in_array($column, FlightTimeEntry::MINUTES, true)) {
-                        $parts = explode(':', (string) $value);
-                        $value = count($parts) === 2 ? (int) $parts[0] * 60 + (int) $parts[1] : (int) $parts[0];
+                        // API filters use ordinary signed H:MM, unlike the portal's comma format.
+                        $text = str_replace('−', '-', (string) $value);
+                        $sign = str_starts_with($text, '-') ? -1 : 1;
+                        $parts = explode(':', ltrim($text, '+-'));
+                        $value = $sign * (count($parts) === 2 ? (int) $parts[0] * 60 + (int) $parts[1] : (int) $parts[0]);
                     }
                     $mode = $constraint['matchMode'];
                     $operators = ['equals' => '=', 'notEquals' => '!=', 'lt' => '<', 'lte' => '<=', 'gt' => '>', 'gte' => '>='];
@@ -70,7 +78,6 @@ class FlightTimeController extends Controller
                 }
             });
         }
-        $sums = implode(', ', array_map(fn ($field) => "SUM({$field}) AS {$field}", FlightTimeEntry::MINUTES));
         $totals = (clone $query)->selectRaw($sums)->first()->only(FlightTimeEntry::MINUTES);
         $group = $data['group_by'] ?? null;
         $sort = $data['sort_by'] ?? 'entry_date';
@@ -90,7 +97,7 @@ class FlightTimeController extends Controller
                 ->selectRaw("{$expression} AS group_value, {$sums}")->groupByRaw($expression)->get();
             $groupTotals = $groups->map(fn ($row) => ['value' => $row->group_value, 'totals' => $row->only(FlightTimeEntry::MINUTES)])->all();
         }
-        return response()->json(array_merge($page->toArray(), ['totals' => $totals, 'group_totals' => $groupTotals]))
+        return response()->json(array_merge($page->toArray(), ['totals' => $totals, 'all_time_totals' => $allTimeTotals, 'group_totals' => $groupTotals]))
             ->header('Cache-Control', 'private, no-store');
     }
 }

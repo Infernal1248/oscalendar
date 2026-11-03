@@ -31,8 +31,8 @@ class FlightTimeSyncController extends Controller
             'totals' => ['required', 'array:'.implode(',', FlightTimeEntry::MINUTES)],
         ];
         foreach (FlightTimeEntry::MINUTES as $field) {
-            $rules["entries.*.{$field}"] = ['present', 'nullable', 'integer', 'min:0', 'max:10000000'];
-            $rules["totals.{$field}"] = ['present', 'nullable', 'integer', 'min:0', 'max:10000000'];
+            $rules["entries.*.{$field}"] = ['present', 'nullable', 'integer', 'min:-10000000', 'max:10000000'];
+            $rules["totals.{$field}"] = ['present', 'nullable', 'integer', 'min:-10000000', 'max:10000000'];
         }
         $data = $request->validate($rules);
         $hash = hash('sha256', json_encode($data, JSON_UNESCAPED_UNICODE));
