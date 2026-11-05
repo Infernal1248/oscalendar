@@ -83,7 +83,7 @@ class FlightTimeController extends Controller
                 : ($minutes ? ['required', 'regex:/\A[+−-]?[0-9]{1,7}(?::[0-5][0-9])?\z/u'] : ['required', 'string', 'max:255']);
         }
         $data = $request->validate($rules);
-        // Test access does not grant access to another employee's records.
+        // Subscription access does not grant access to another employee's records.
         $query = FlightTimeEntry::where('user_id', $request->user()->id);
         $sums = implode(', ', array_map(fn ($field) => "SUM({$field}) AS {$field}", FlightTimeEntry::MINUTES));
         // Opening balances affect only the summary, never table rows or filtered totals.

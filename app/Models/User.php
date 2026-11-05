@@ -91,7 +91,7 @@ class User extends Authenticatable
 
     public function hasFlightTimeAccess(): bool
     {
-        return $this->status === 'active' && ($this->isAdmin() || (int) $this->id === 2);
+        return $this->hasReportsAccess();
     }
 
     public function hasStatisticsAccess(): bool

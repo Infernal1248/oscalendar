@@ -23,6 +23,8 @@ class FlightTimeTest extends TestCase
         $this->admin = User::create(['status' => 'active', 'role' => 'admin']);
         $this->tester = User::create(['status' => 'active']);
         $this->ordinary = User::create(['status' => 'active']);
+        $this->grantSubscription($this->tester);
+        $this->tester->subscriptionPayments()->update(['tier' => 'extended']);
         foreach ([$this->admin, $this->tester, $this->ordinary] as $user) {
             PortalCredential::create(['user_id' => $user->id, 'portal' => 'rossiya_edu', 'login' => 'user-'.$user->id,
                 'password_encrypted' => Crypt::encryptString('test'), 'status' => 'active']);
@@ -214,7 +216,7 @@ class FlightTimeTest extends TestCase
         $this->assertSame(1, FlightTimeOpeningBalance::count());
     }
 
-    public function test_page_and_api_are_restricted_to_admin_and_user_two_and_always_scope_to_the_viewer(): void
+    public function test_page_and_api_allow_extended_subscribers_and_admin_and_always_scope_to_the_viewer(): void
     {
         $this->assertSame(2, $this->tester->id);
         $this->seedRows($this->tester, [$this->row()]);
@@ -226,8 +228,54 @@ class FlightTimeTest extends TestCase
         $this->actingAs($this->tester, 'sanctum')->getJson('/api/flight-time?user_id='.$this->ordinary->id)
             ->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.user_id', $this->tester->id);
         $this->assertContains('flight-time', $this->getJson('/api/account')->assertOk()->json('navigation'));
+        $this->grantSubscription($this->ordinary);
+        $this->ordinary->subscriptionPayments()->update(['tier' => 'extended']);
+        $this->actingAs($this->ordinary, 'sanctum')->getJson('/api/flight-time?user_id='.$this->tester->id)
+            ->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.user_id', $this->ordinary->id);
+        $this->getJson('/api/flight-time/metadata')->assertOk()->assertJsonCount(13, 'columns');
+        $this->assertContains('flight-time', $this->getJson('/api/account')->assertOk()->json('navigation'));
+        $this->patchJson('/api/flight-time/opening-balance', ['flight_time' => '1:00', 'airborne_time' => null,
+            'night_time' => null, 'covered_until' => null])->assertOk()->assertJsonPath('all_time_totals.actual_flight_minutes', 213);
+        $this->assertDatabaseHas('flight_time_opening_balances', ['user_id' => $this->ordinary->id, 'flight_minutes' => 60]);
+        $this->assertDatabaseMissing('flight_time_opening_balances', ['user_id' => $this->tester->id]);
         $this->actingAs($this->admin, 'sanctum')->getJson('/api/flight-time/metadata')->assertOk()->assertJsonCount(13, 'columns');
         $this->getJson('/api/flight-time')->assertOk()->assertJsonPath('total', 0);
+    }
+
+    public function test_flight_time_access_tracks_subscription_validity_without_a_user_two_exception(): void
+    {
+        $this->tester->subscriptionPayments()->delete();
+        $this->actingAs($this->tester, 'sanctum')->getJson('/api/flight-time')->assertForbidden();
+        $this->assertNotContains('flight-time', $this->getJson('/api/account')->assertOk()->json('navigation'));
+
+        $this->grantSubscription($this->ordinary);
+        $payment = $this->ordinary->subscriptionPayments()->sole();
+        $this->actingAs($this->ordinary, 'sanctum');
+        foreach ([
+            ['tier' => 'basic'],
+            ['ends_at' => now()->subDay()],
+            ['starts_at' => now()->addDay()],
+            ['canceled_at' => now()],
+            ['grants_access' => false],
+            ['ends_at' => now()->startOfDay()],
+        ] as $override) {
+            $payment->update(array_replace(['tier' => 'extended', 'starts_at' => now()->subDay(),
+                'ends_at' => now()->addMonth(), 'canceled_at' => null, 'grants_access' => true], $override));
+            $allowed = array_key_exists('ends_at', $override) && $override['ends_at']->isToday();
+            $this->assertSame($allowed, $this->ordinary->fresh()->hasFlightTimeAccess());
+            $this->assertSame($allowed, $this->ordinary->fresh()->load('subscriptionPayments')->hasFlightTimeAccess());
+            foreach (['/api/flight-time', '/api/flight-time/metadata'] as $url) {
+                $this->getJson($url)->assertStatus($allowed ? 200 : 403);
+            }
+            $this->patchJson('/api/flight-time/opening-balance', ['flight_time' => null, 'airborne_time' => null,
+                'night_time' => null, 'covered_until' => null])->assertStatus($allowed ? 200 : 403);
+            $this->assertSame($allowed, in_array('flight-time', $this->getJson('/api/account')->assertOk()->json('navigation'), true));
+        }
+        foreach ([$this->ordinary, $this->admin] as $user) {
+            $user->update(['status' => 'blocked']);
+            $this->assertFalse($user->fresh()->hasFlightTimeAccess());
+            $this->actingAs($user, 'sanctum')->getJson('/api/flight-time')->assertForbidden();
+        }
     }
 
     public function test_weekly_replacement_is_atomic_idempotent_and_preserves_older_history_and_other_users(): void
