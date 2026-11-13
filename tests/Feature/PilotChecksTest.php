@@ -193,7 +193,7 @@ class PilotChecksTest extends TestCase
         $push->shouldReceive('configured')->andReturn(true);
         $push->shouldReceive('send')->once()->andReturn('sent');
         $check = PilotCheck::create(['user_id' => $user->id, 'origin' => 'manual', 'title' => '<Новая>', 'due_on' => '2026-10-27']); // 14 days from local October 13
-        Http::fake(['api.telegram.org/*' => Http::sequence()->push(['ok' => false], 503)->push(['ok' => true, 'result' => ['message_id' => 1]])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::sequence()->push(['ok' => false], 503)->push(['ok' => true, 'result' => ['message_id' => 1]])]);
         Artisan::call('checks:notify');
         $this->assertDatabaseCount('pilot_check_deliveries', 2);
         $this->assertSame(1, DB::table('pilot_check_deliveries')->whereNotNull('sent_at')->count());

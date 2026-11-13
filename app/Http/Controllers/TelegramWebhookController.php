@@ -11,12 +11,9 @@ class TelegramWebhookController extends Controller
 {
     public function __invoke(Request $request, TelegramBotService $bot): JsonResponse
     {
-        $this->validateBridgeRequest($request);
-
         $update = $request->all();
 
         Log::info('Telegram bridge update received', [
-            'bot' => $request->header('X-TG-Bot'),
             'update_id' => $update['update_id'] ?? null,
             'type' => $this->updateType($update),
             'chat_id' => $this->chatId($update),
@@ -33,7 +30,6 @@ class TelegramWebhookController extends Controller
                 'chat_id' => $this->chatId($update),
                 'telegram_id' => $this->telegramUserId($update),
                 'exception' => get_class($exception),
-                'message' => $exception->getMessage(),
             ]);
 
             throw $exception;
@@ -46,40 +42,6 @@ class TelegramWebhookController extends Controller
         return response()->json([
             'ok' => true,
         ]);
-    }
-
-    private function validateBridgeRequest(Request $request): void
-    {
-        if ($request->header('X-TG-Bridge') !== 'vds-poller') {
-            Log::warning('Telegram bridge request rejected: invalid bridge header', [
-                'x_tg_bridge' => $request->header('X-TG-Bridge'),
-                'x_tg_bot' => $request->header('X-TG-Bot'),
-                'ip' => $request->ip(),
-            ]);
-
-            abort(403, 'Invalid Telegram bridge.');
-        }
-
-        $botName = config('services.telegram_bridge.name');
-        if ($botName && $request->header('X-TG-Bot') !== $botName) {
-            Log::warning('Telegram bridge request rejected: invalid bot name', [
-                'expected_bot' => $botName,
-                'actual_bot' => $request->header('X-TG-Bot'),
-                'ip' => $request->ip(),
-            ]);
-
-            abort(403, 'Invalid Telegram bridge bot.');
-        }
-
-        $secret = config('services.telegram_bridge.secret');
-        if ($secret && $request->header('X-TG-Bridge-Secret') !== $secret) {
-            Log::warning('Telegram bridge request rejected: invalid secret', [
-                'x_tg_bot' => $request->header('X-TG-Bot'),
-                'ip' => $request->ip(),
-            ]);
-
-            abort(403, 'Invalid Telegram bridge secret.');
-        }
     }
 
     private function updateType(array $update): string
@@ -125,10 +87,10 @@ class TelegramWebhookController extends Controller
     {
         $text = $update['message']['text'] ?? null;
 
-        if (! is_string($text) || strpos($text, '/') !== 0) {
+        if (! is_string($text) || ! preg_match('/\A\/(start|help|pending|adduser|approve)(?:\s|$)/', $text, $matches)) {
             return null;
         }
 
-        return explode(' ', trim($text))[0] ?? null;
+        return '/'.$matches[1];
     }
 }

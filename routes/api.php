@@ -104,10 +104,11 @@ Route::prefix('internal')
         Route::post('/sync-result', [SyncResultController::class, 'store']);
     });
 
-Route::post('/telegram/webhook', TelegramWebhookController::class);
+Route::match(['GET', 'POST'], '/telegram/webhook', TelegramWebhookController::class)
+    ->middleware(\App\Http\Middleware\BotHubWebhook::class.':services.telegram_bot.token');
 Route::post('/payments/yookassa/{mode}', [\App\Http\Controllers\CheckoutController::class, 'webhook'])->whereIn('mode', ['live']);
-Route::post('/telegram/monitor/webhook', \App\Http\Controllers\MonitorWebhookController::class)
-    ->withoutMiddleware('throttle:api')->middleware('throttle:monitor');
+Route::match(['GET', 'POST'], '/telegram/monitor/webhook', \App\Http\Controllers\MonitorWebhookController::class)
+    ->withoutMiddleware('throttle:api')->middleware(['throttle:monitor', \App\Http\Middleware\BotHubWebhook::class.':monitor.token']);
 Route::get('/calendar/{token}.ics', [CalendarFeedController::class, 'show']);
 
 Route::middleware(\App\Http\Middleware\AuthenticateNpdApi::class)->prefix('npd')->group(function () {

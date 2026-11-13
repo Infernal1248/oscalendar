@@ -5,26 +5,11 @@ namespace App\Http\Controllers;
 use App\Services\SystemMonitor;
 use App\Services\Telegram\MonitorBotClient;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
 
 class MonitorWebhookController extends Controller
 {
     public function __invoke(Request $request, SystemMonitor $monitor, MonitorBotClient $bot)
     {
-        // Same bridge and optional shared secret as the ordinary Telegram bot.
-        $secret = config('services.telegram_bridge.secret');
-        $name = config('monitor.bridge_name');
-        $reason = match (true) {
-            $request->header('X-TG-Bridge') !== 'vds-poller' => 'invalid_bridge_header',
-            $name && $request->header('X-TG-Bot') !== $name => 'invalid_bot_name',
-            $secret && ! hash_equals((string) $secret, (string) $request->header('X-TG-Bridge-Secret')) => 'invalid_bridge_secret',
-            default => null,
-        };
-        if ($reason !== null) {
-            Log::warning('Monitor bridge request rejected', ['reason' => $reason]);
-            return response()->json(['message' => 'Invalid Telegram bridge.', 'reason' => $reason], 403);
-        }
         $message = $request->input('message', []);
         $from = (string) data_get($message, 'from.id', '');
         if (! in_array($from, array_map('strval', config('monitor.admin_ids')), true)
@@ -36,21 +21,11 @@ class MonitorWebhookController extends Controller
         if (! isset($data['message']['text'])) {
             return response()->json(['ok' => true]);
         }
-        $key = 'monitor:update:'.$data['update_id'];
-        if (! Cache::add($key, true, now()->addDay())) {
-            return response()->json(['ok' => true]);
-        }
         $text = trim($data['message']['text']);
         $command = [ 'Состояние' => '/status', 'Парсеры' => '/parsers', 'Очередь' => '/queue', 'Ошибки' => '/errors',
             'Нагрузка' => '/load', 'Сводка' => '/summary' ][$text]
             ?? explode('@', explode(' ', $text)[0])[0];
-        try {
-            $bot->send($from, $monitor->report($command));
-        } catch (\Throwable $exception) {
-            Cache::forget($key);
-            // The bridge must retry non-2xx responses without advancing its offset.
-            return response()->json(['ok' => false], 503);
-        }
+        $bot->send($from, $monitor->report($command));
 
         return response()->json(['ok' => true]);
     }

@@ -108,7 +108,7 @@ class PortalCredentialUpdateTest extends TestCase
 
     public function test_telegram_password_change_preserves_spaces_and_uses_the_same_update_and_resync_flow(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
         TelegramAccount::create(['user_id' => $this->user->id, 'telegram_id' => 123]);
         foreach (['Сменить пароль', ' telegram-new-password '] as $text) {
             app(TelegramBotService::class)->handle(['message' => ['from' => ['id' => 123],

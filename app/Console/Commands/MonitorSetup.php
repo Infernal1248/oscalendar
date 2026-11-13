@@ -9,7 +9,7 @@ class MonitorSetup extends Command
 {
     protected $signature = 'monitor:setup';
     protected $aliases = ['monitor:webhook'];
-    protected $description = 'Prepare the separate monitor bot for the VDS polling bridge';
+    protected $description = 'Prepare commands for the separate monitor bot through bot-hub';
 
     public function handle(MonitorBotClient $bot): int
     {
@@ -18,7 +18,6 @@ class MonitorSetup extends Command
             'APP_URL must be a valid HTTPS URL.' => filter_var($base, FILTER_VALIDATE_URL) && parse_url($base, PHP_URL_SCHEME) === 'https',
             'MONITOR_BOT_TOKEN must be set and differ from TELEGRAM_BOT_TOKEN.' => config('monitor.token') && config('monitor.token') !== config('services.telegram_bot.token'),
             'MONITOR_ADMIN_IDS must contain numeric Telegram user IDs.' => ! empty(config('monitor.admin_ids')),
-            'MONITOR_BRIDGE_NAME must be set.' => is_string(config('monitor.bridge_name')) && trim(config('monitor.bridge_name')) !== '',
         ];
         foreach ($checks as $message => $valid) {
             if (! $valid) {
@@ -29,9 +28,6 @@ class MonitorSetup extends Command
             return self::FAILURE;
         }
         try {
-            // getUpdates cannot work while a Telegram webhook is registered.
-            // Keep pending updates so moving to the bridge does not discard commands.
-            $bot->request('deleteWebhook', ['drop_pending_updates' => false]);
             $bot->request('setMyCommands', ['commands' => [
                 ['command' => 'status', 'description' => 'Состояние системы'],
                 ['command' => 'parsers', 'description' => 'VM и загрузка воркеров'],
@@ -45,10 +41,9 @@ class MonitorSetup extends Command
             $this->error($exception->getMessage());
             return self::FAILURE;
         }
-        $this->info('Monitor bot is ready for VDS polling; direct Telegram webhook removed.');
-        $this->line('Bridge bot name: '.config('monitor.bridge_name'));
-        $this->line('Bridge target: '.$base.'/api/telegram/monitor/webhook');
-        $this->line('Use the existing VDS bridge settings, then send /start to the bot. No separate monitor secret is needed.');
+        $this->info('Monitor bot commands configured through bot-hub.');
+        $this->line('Callback: '.$base.'/api/telegram/monitor/webhook');
+        $this->line('Register the bot on the VPS: bot-hubctl add oscalendar-monitor --callback '.$base.'/api/telegram/monitor/webhook');
         return self::SUCCESS;
     }
 }

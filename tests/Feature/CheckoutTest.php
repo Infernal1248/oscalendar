@@ -277,7 +277,7 @@ class CheckoutTest extends TestCase
             $mock->shouldReceive('configured')->andReturn(true);
             $mock->shouldReceive('send')->once()->withArgs(fn ($target, $payload) => $target->id === $device->id && str_contains($payload['body'], 'Новый платёж') && str_contains($payload['body'], '250,00'))->andReturn('sent');
         });
-        Http::fake(['https://api.telegram.org/*' => Http::sequence()->push(['ok' => false], 500)->push(['ok' => true, 'result' => ['message_id' => 1]])]);
+        Http::fake(['https://tg.volodimir-k.su/*' => Http::sequence()->push(['ok' => false], 500)->push(['ok' => true, 'result' => ['message_id' => 1]])]);
         $order = $this->createOrder(); $this->succeed($order); $this->webhook($order)->assertOk();
         $this->assertSame(1, DB::table('payment_notifications')->whereNotNull('sent_at')->count());
         $this->webhook($order)->assertOk(); $this->assertDatabaseCount('payment_notifications', 2);

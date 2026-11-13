@@ -50,7 +50,7 @@ class SystemMonitorTest extends TestCase
 
     private function bridgeHeaders(): array
     {
-        return ['X-TG-Bridge' => 'vds-poller', 'X-TG-Bot' => 'oscalendar_monitor_bot', 'X-TG-Bridge-Secret' => str_repeat('s', 32)];
+        return ['X-Bot-Hub-Secret' => hash_hmac('sha256', 'bot-hub-forward-v1', config('monitor.token'))];
     }
 
     public function test_node_auth_validation_and_idle_liveness_do_not_create_jobs(): void
@@ -76,26 +76,28 @@ class SystemMonitorTest extends TestCase
 
     public function test_monitor_is_private_fail_closed_and_uses_only_its_own_token(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true])]);
         $update = ['update_id' => 1, 'message' => ['from' => ['id' => 12345], 'chat' => ['id' => 12345, 'type' => 'private'], 'text' => '/start']];
         $this->postJson('/api/telegram/monitor/webhook', $update)->assertForbidden();
         $headers = $this->bridgeHeaders();
         $this->postJson('/api/telegram/monitor/webhook', $update, ['X-Telegram-Bot-Api-Secret-Token' => str_repeat('s', 32)])->assertForbidden();
-        foreach (['X-TG-Bridge' => 'wrong', 'X-TG-Bot' => 'oscalendar_bot', 'X-TG-Bridge-Secret' => 'wrong'] as $header => $value) {
+        foreach (['X-Bot-Hub-Secret' => 'wrong'] as $header => $value) {
             $this->postJson('/api/telegram/monitor/webhook', $update, array_replace($headers, [$header => $value]))->assertForbidden();
             $this->postJson('/api/telegram/monitor/webhook', $update, array_diff_key($headers, [$header => true]))->assertForbidden();
         }
         $stranger = $update;
+        $stranger['update_id'] = 2;
         $stranger['message']['from']['id'] = 987;
         $this->postJson('/api/telegram/monitor/webhook', $stranger, $headers)->assertOk();
         $group = $update;
+        $group['update_id'] = 3;
         $group['message']['chat'] = ['id' => -1, 'type' => 'group'];
         $this->postJson('/api/telegram/monitor/webhook', $group, $headers)->assertOk();
         Http::assertNothingSent();
         $this->postJson('/api/telegram/monitor/webhook', $update, $headers)->assertOk();
         $this->postJson('/api/telegram/monitor/webhook', $update, $headers)->assertOk();
         Http::assertSentCount(1);
-        Http::assertSent(fn ($r) => $r->url() === 'https://api.telegram.org/botmonitor-test-token/sendMessage'
+        Http::assertSent(fn ($r) => $r->url() === 'https://tg.volodimir-k.su/botmonitor-test-token/sendMessage'
             && $r['chat_id'] === '12345' && isset($r['reply_markup']['keyboard']));
     }
 
@@ -110,7 +112,7 @@ class SystemMonitorTest extends TestCase
 
     public function test_failed_webhook_reply_is_retryable(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::sequence()->push(['ok' => false], 429)->push(['ok' => true])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::sequence()->push(['ok' => false], 429)->push(['ok' => true])]);
         $update = ['update_id' => 9, 'message' => ['from' => ['id' => 12345], 'chat' => ['id' => 12345, 'type' => 'private'], 'text' => 'Состояние']];
         $headers = $this->bridgeHeaders();
         $this->postJson('/api/telegram/monitor/webhook', $update, $headers)->assertStatus(503);
@@ -128,7 +130,7 @@ class SystemMonitorTest extends TestCase
 
     public function test_telegram_transport_exception_does_not_expose_token(): void
     {
-        Http::fake(fn () => throw new \RuntimeException('https://api.telegram.org/botmonitor-test-token/sendMessage'));
+        Http::fake(fn () => throw new \RuntimeException('https://tg.volodimir-k.su/botmonitor-test-token/sendMessage'));
         try {
             app(MonitorBotClient::class)->send('12345', 'test');
             $this->fail('Failed transport must throw a safe exception.');
@@ -140,7 +142,7 @@ class SystemMonitorTest extends TestCase
 
     public function test_alerts_are_deduplicated_persistent_and_recover_with_idle_heartbeat(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true])]);
         config(['monitor.node_ids' => ['vm-1']]);
         $monitor = app(SystemMonitor::class);
         $bot = app(MonitorBotClient::class);
@@ -175,7 +177,7 @@ class SystemMonitorTest extends TestCase
     public function test_reserve_is_hidden_and_its_absence_does_not_alert_or_send_false_recovery(): void
     {
         config(['monitor.node_ids' => ['vm-1'], 'monitor.reserve_node_ids' => ['parser-reserve-5-mac']]);
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true])]);
         $this->heartbeat();
         DB::table('monitor_alerts')->insert(['key' => '12345:node:parser-reserve-5-mac', 'active' => true, 'sent_at' => now()->subHour()]);
 
@@ -195,7 +197,7 @@ class SystemMonitorTest extends TestCase
     public function test_online_reserve_does_not_hide_failure_of_all_primary_nodes(): void
     {
         config(['monitor.node_ids' => ['vm-1'], 'monitor.reserve_node_ids' => ['parser-reserve-5-mac']]);
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true])]);
         $this->withToken('internal-test')->postJson('/api/internal/parser-nodes/heartbeat', [
             'node_id' => 'parser-reserve-5-mac', 'source' => 'rossiya_edu', 'version' => 'test',
             'max_workers' => 5, 'busy_workers' => 2,
@@ -215,7 +217,7 @@ class SystemMonitorTest extends TestCase
     public function test_only_reserve_nodes_offline_does_not_trigger_all_nodes_alarm(): void
     {
         config(['monitor.node_ids' => [], 'monitor.reserve_node_ids' => ['parser-reserve-5-mac']]);
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true])]);
         app(SystemMonitor::class)->checkAlerts(app(MonitorBotClient::class));
         Http::assertNothingSent();
         $this->withToken('internal-test')->getJson('/api/internal/monitor/health')->assertOk()
@@ -224,7 +226,7 @@ class SystemMonitorTest extends TestCase
 
     public function test_queue_stale_sync_and_errors_use_real_statuses_without_disclosing_raw_errors(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true])]);
         $user = User::create(['display_name' => 'Test', 'status' => 'active']);
         PortalCredential::create(['user_id' => $user->id, 'portal' => 'rossiya_edu', 'login' => 'x', 'password_encrypted' => 'x', 'status' => 'active']);
         $task = ParserTask::create(['task_key' => 'roster:1', 'user_id' => $user->id, 'task_type' => 'roster_refresh',
@@ -253,27 +255,27 @@ class SystemMonitorTest extends TestCase
         $this->assertFalse($monitor->snapshot()['stale_roster']);
     }
 
-    public function test_bridge_setup_validates_config_and_removes_only_monitor_webhook_without_dropping_updates(): void
+    public function test_bridge_setup_validates_config_and_sets_commands_without_managing_webhooks(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true])]);
         config(['app.url' => 'http://localhost']);
         $this->artisan('monitor:setup')->expectsOutputToContain('APP_URL')->assertFailed();
         Http::assertNothingSent();
         config(['app.url' => 'https://oscalendar.example']);
         $this->artisan('monitor:setup')->expectsOutputToContain('https://oscalendar.example/api/telegram/monitor/webhook')->assertSuccessful();
-        Http::assertSentCount(2);
-        Http::assertSent(fn ($r) => $r->url() === 'https://api.telegram.org/botmonitor-test-token/deleteWebhook'
-            && $r['drop_pending_updates'] === false);
-        Http::assertSent(fn ($r) => $r->url() === 'https://api.telegram.org/botmonitor-test-token/setMyCommands');
+        Http::assertSentCount(1);
+        Http::assertNotSent(fn ($r) => str_ends_with($r->url(), '/deleteWebhook'));
+        Http::assertSent(fn ($r) => $r->url() === 'https://tg.volodimir-k.su/botmonitor-test-token/setMyCommands');
         Http::assertNotSent(fn ($r) => str_contains($r->url(), 'botuser-bot-token') || str_ends_with($r->url(), '/setWebhook'));
     }
 
     public function test_old_setup_command_is_an_alias_and_cannot_reenable_direct_webhook(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true])]);
         config(['app.url' => 'https://oscalendar.example']);
         $this->artisan('monitor:webhook')->assertSuccessful();
-        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/deleteWebhook'));
+        Http::assertNotSent(fn ($r) => str_ends_with($r->url(), '/deleteWebhook'));
+        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/setMyCommands'));
         Http::assertNotSent(fn ($r) => str_ends_with($r->url(), '/setWebhook'));
     }
 
@@ -284,35 +286,27 @@ class SystemMonitorTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_existing_bridge_without_secret_is_accepted_and_obsolete_monitor_secrets_are_ignored(): void
+    public function test_legacy_bridge_headers_cannot_bypass_bot_hub_authentication(): void
     {
-        config([
-            'app.url' => 'https://oscalendar.example',
-            'services.telegram_bridge.secret' => null,
-            'monitor.bridge_secret' => 'obsolete-config-cache-value',
-            'monitor.webhook_secret' => 'obsolete-config-cache-value',
-        ]);
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
-        $headers = ['X-TG-Bridge' => 'vds-poller', 'X-TG-Bot' => 'oscalendar_monitor_bot'];
-        $update = ['update_id' => 101, 'message' => ['from' => ['id' => 12345], 'chat' => ['id' => 12345, 'type' => 'private'], 'text' => '/start']];
-        $this->postJson('/api/telegram/monitor/webhook', $update, $headers)->assertOk();
-        Http::assertSentCount(1);
-        $this->artisan('monitor:setup')->assertSuccessful();
-        $update['update_id']++;
-        $update['message']['from']['id'] = 999;
-        $this->postJson('/api/telegram/monitor/webhook', $update, $headers)->assertOk();
-        Http::assertSentCount(3); // /start plus deleteWebhook and setMyCommands, no stranger reply.
+        config(['services.telegram_bridge.secret' => null]);
+        Http::fake();
+        $this->postJson('/api/telegram/monitor/webhook', [], ['X-TG-Bridge' => 'vds-poller',
+            'X-TG-Bot' => 'oscalendar_monitor_bot'])->assertForbidden();
+        Http::assertNothingSent();
     }
 
-    public function test_shared_secret_matches_ordinary_bot_and_rejection_is_logged_without_secret(): void
+    public function test_each_bot_requires_its_own_hmac_and_missing_token_fails_closed(): void
     {
-        \Illuminate\Support\Facades\Log::spy();
-        config(['services.telegram_bridge.secret' => 'existing-shared-secret']);
-        $headers = $this->bridgeHeaders();
-        $this->postJson('/api/telegram/monitor/webhook', [], $headers)->assertForbidden()
-            ->assertJsonPath('reason', 'invalid_bridge_secret');
-        \Illuminate\Support\Facades\Log::shouldHaveReceived('warning')->once()->with('Monitor bridge request rejected', ['reason' => 'invalid_bridge_secret']);
-        $headers['X-TG-Bridge-Secret'] = 'existing-shared-secret';
-        $this->postJson('/api/telegram/monitor/webhook', [], $headers)->assertOk();
+        Http::fake();
+        $headers = ['X-Bot-Hub-Secret' => hash_hmac('sha256', 'bot-hub-forward-v1', 'user-bot-token')];
+        $this->postJson('/api/telegram/monitor/webhook', [], $headers)->assertForbidden();
+        config(['monitor.token' => null]);
+        $this->postJson('/api/telegram/monitor/webhook', [], $this->bridgeHeadersForToken('monitor-test-token'))->assertStatus(503);
+        Http::assertNothingSent();
+    }
+
+    private function bridgeHeadersForToken(string $token): array
+    {
+        return ['X-Bot-Hub-Secret' => hash_hmac('sha256', 'bot-hub-forward-v1', $token)];
     }
 }

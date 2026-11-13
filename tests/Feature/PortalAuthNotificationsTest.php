@@ -62,7 +62,7 @@ class PortalAuthNotificationsTest extends TestCase
 
     private function fakeTelegram(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
     }
 
     public function test_short_auth_failures_and_server_errors_never_warn_the_user(): void
@@ -105,7 +105,7 @@ class PortalAuthNotificationsTest extends TestCase
         $this->finish();
         Artisan::call('portal:notify-auth');
         Http::assertSentCount(1);
-        Http::assertSent(fn ($r) => $r->url() === 'https://api.telegram.org/botuser-test-token/sendMessage'
+        Http::assertSent(fn ($r) => $r->url() === 'https://tg.volodimir-k.su/botuser-test-token/sendMessage'
             && $r['chat_id'] === 123 && str_contains($r['text'], 'обновите логин и пароль')
             && str_contains($r['text'], 'прежние логин и пароль')
             && str_contains($r['text'], 'тоже будет по новым данным')
@@ -174,7 +174,7 @@ class PortalAuthNotificationsTest extends TestCase
 
     public function test_failed_delivery_waits_an_hour_then_rechecks_recovery_before_retry(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => false], 503)]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => false], 503)]);
         $this->prolongedFailures();
         Artisan::call('portal:notify-auth');
         Artisan::call('portal:notify-auth');
@@ -188,7 +188,7 @@ class PortalAuthNotificationsTest extends TestCase
 
     public function test_failed_telegram_delivery_falls_back_to_push_without_resending_later(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => false], 503)]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => false], 503)]);
         $push = $this->mock(WebPushSender::class);
         $push->shouldReceive('configured')->andReturn(true);
         $push->shouldReceive('send')->once()->andReturnUsing(function ($device, $payload) {
@@ -211,7 +211,7 @@ class PortalAuthNotificationsTest extends TestCase
 
     public function test_failed_delivery_retries_after_an_hour_and_only_marks_successful_delivery_sent(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::sequence()->push(['ok' => false], 503)
+        Http::fake(['tg.volodimir-k.su/*' => Http::sequence()->push(['ok' => false], 503)
             ->push(['ok' => true, 'result' => ['message_id' => 2]])]);
         $this->prolongedFailures();
         Artisan::call('portal:notify-auth');

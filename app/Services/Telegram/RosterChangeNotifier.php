@@ -53,6 +53,8 @@ class RosterChangeNotifier
                     $deliveredChats[] = (int) $account->telegram_id;
                 }
             }
+            // A later recipient may fail; retain already delivered messages for the retry.
+            $event->forceFill(['telegram_messages' => $messages])->save();
         }
 
         $delivered = $accounts->every(fn (TelegramAccount $account) => in_array(
@@ -97,6 +99,7 @@ class RosterChangeNotifier
                     $deliveredChats[] = (int) $account->telegram_id;
                 }
             }
+            $event->forceFill(['acknowledgement_messages' => $messages])->save();
         }
         $delivered = $accounts->every(fn (TelegramAccount $account) => in_array(
             (int) $account->telegram_id,
@@ -119,6 +122,7 @@ class RosterChangeNotifier
             if (isset($message['chat_id'], $message['message_id'])) {
                 if ($this->client->removeInlineKeyboard((int) $message['chat_id'], (int) $message['message_id'])) {
                     $message['buttons_removed'] = true;
+                    $event->forceFill(['telegram_messages' => $messages])->save();
                 } else {
                     $done = false;
                 }

@@ -2,7 +2,6 @@
 
 return [
     'token' => env('MONITOR_BOT_TOKEN'),
-    'bridge_name' => env('MONITOR_BRIDGE_NAME', 'oscalendar_monitor_bot'),
     'admin_ids' => array_values(array_filter(array_map('trim', explode(',', env('MONITOR_ADMIN_IDS', ''))), fn ($id) => ctype_digit($id) && (int) $id > 0)),
     // An explicit list also detects a VM that has never sent a heartbeat.
     'node_ids' => array_values(array_filter(array_map('trim', explode(',', env('MONITOR_NODE_IDS', ''))))),

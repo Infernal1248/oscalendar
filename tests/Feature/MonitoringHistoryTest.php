@@ -259,7 +259,7 @@ class MonitoringHistoryTest extends TestCase
 
     public function test_digest_schedule_and_deduplication_are_in_krasnoyarsk_time(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true])]);
         config(['monitor.admin_ids' => ['12345', '67890']]);
         $this->travelTo(now()->subMinute()); // 07:59 Krasnoyarsk.
         app(MonitorDigest::class)->sendDue();
@@ -337,7 +337,7 @@ class MonitoringHistoryTest extends TestCase
     {
         DB::table('monitor_report_deliveries')->insert(['chat_id' => '12345', 'slot_at' => now(),
             'body' => str_repeat('A', 3500).str_repeat('B', 3500).'C', 'next_chunk' => 0]);
-        Http::fake(['api.telegram.org/*' => Http::sequence()->push(['ok' => true])->push(['ok' => false], 503)
+        Http::fake(['tg.volodimir-k.su/*' => Http::sequence()->push(['ok' => true])->push(['ok' => false], 503)
             ->push(['ok' => true])->push(['ok' => true])]);
         app(MonitorDigest::class)->sendDue();
         $this->assertSame(1, DB::table('monitor_report_deliveries')->value('next_chunk'));
@@ -350,7 +350,7 @@ class MonitoringHistoryTest extends TestCase
 
     public function test_stale_cron_is_visible_but_parser_heartbeat_does_not_run_a_watchdog(): void
     {
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true])]);
         InternalApiToken::create(['name' => 'monitor-test', 'token_hash' => InternalApiToken::hashToken('parser-test'), 'is_active' => true]);
         DB::table('monitor_runtime')->where('key', 'installed_at')->update(['seen_at' => now()->subMinutes(10)]);
         $payload = ['node_id' => 'vm-1', 'source' => 'rossiya_edu', 'version' => 'test', 'max_workers' => 5, 'busy_workers' => 0];

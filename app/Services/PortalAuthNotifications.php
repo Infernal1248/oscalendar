@@ -89,11 +89,16 @@ class PortalAuthNotifications
                 if (config('services.telegram_bot.token') && $user->telegram_notifications_enabled) {
                     foreach ($user->telegramAccounts as $account) {
                         if (! $this->stillCurrent($credential)) break;
-                        if (count(app(TelegramBotClient::class)->sendMessage($account->telegram_id, $body, [
-                            'parse_mode' => null, 'reply_markup' => ['inline_keyboard' => [[
-                                ['text' => 'Обновить логин и пароль', 'url' => $profileUrl],
-                            ]]],
-                        ])) > 0) {
+                        try {
+                            $results = app(TelegramBotClient::class)->sendMessage($account->telegram_id, $body, [
+                                'parse_mode' => null, 'reply_markup' => ['inline_keyboard' => [[
+                                    ['text' => 'Обновить логин и пароль', 'url' => $profileUrl],
+                                ]]],
+                            ]);
+                        } catch (\RuntimeException $exception) {
+                            $results = []; // Keep the existing push fallback when Telegram is unavailable.
+                        }
+                        if (count($results) > 0) {
                             $sent = true;
                             break;
                         }

@@ -72,7 +72,7 @@ class PilotCheckReminderQueueTest extends TestCase
     {
         TelegramAccount::create(['user_id' => $this->user->id, 'telegram_id' => 111]);
         $check = $this->check();
-        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
+        Http::fake(['tg.volodimir-k.su/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
         $this->assertTrue($this->scheduled());
         Artisan::call('checks:notify');
         $this->assertFalse($this->scheduled());
@@ -86,7 +86,7 @@ class PilotCheckReminderQueueTest extends TestCase
     {
         TelegramAccount::create(['user_id' => $this->user->id, 'telegram_id' => 111]);
         $this->check();
-        Http::fake(['api.telegram.org/*' => Http::sequence()->push(['ok' => false], 503)
+        Http::fake(['tg.volodimir-k.su/*' => Http::sequence()->push(['ok' => false], 503)
             ->push(['ok' => true, 'result' => ['message_id' => 1]])]);
         Artisan::call('checks:notify');
         $this->assertFalse($this->scheduled());

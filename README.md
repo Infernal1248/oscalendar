@@ -68,28 +68,27 @@ API возвращает дату оплаты и даты периода как
 
 ## OSCalendar Monitor (отдельный технический Telegram-бот)
 
-Работает в этом Laravel-приложении на хостинге. Новый бот получает команды через тот же
-VDS polling bridge, что и пользовательский: добавляется отдельная запись в список ботов моста.
-Ответы и автоматические уведомления Laravel отправляет напрямую в Telegram, как у обычного бота.
-Настройки и обработчик пользовательского бота не меняются.
-Он только читает состояние системы: никаких команд изменения расписаний, перезапуска VM
-или выполнения shell-команд нет. Фронтенд обновлять не требуется.
+Работает в этом Laravel-приложении на хостинге. Команды, ответы и автоматические
+уведомления проходят через `https://tg.volodimir-k.su` (bot-hub), как у пользовательского
+бота, но с отдельным токеном. Он только читает состояние системы: команд изменения
+расписаний, перезапуска VM или выполнения shell-команд нет. Фронтенд обновлять не требуется.
 
 ### Включение на REG.RU
 
-1. Загрузите обновлённый бэкенд и выполните из каталога проекта:
+1. Загрузите бэкенд, выполните миграции, сбросьте маршруты и обновите конфигурацию:
 
    ```bash
    /opt/php/8.4/bin/php artisan migrate --force
    /opt/php/8.4/bin/php artisan route:clear
+   /opt/php/8.4/bin/php artisan config:cache
    ```
 
 2. Заполните `.env` на хостинге (не коммитьте токены):
 
    ```dotenv
    APP_URL=https://oscalendar.ru
-   MONITOR_BOT_TOKEN=токен_нового_бота
-   MONITOR_BRIDGE_NAME=oscalendar_monitor_bot
+   TELEGRAM_API_BASE_URL=https://tg.volodimir-k.su
+   MONITOR_BOT_TOKEN=токен_отдельного_технического_бота
    MONITOR_ADMIN_IDS=ваш_числовой_Telegram_ID
    MONITOR_NODE_IDS=
    MONITOR_OFFLINE_SECONDS=300
@@ -97,69 +96,31 @@ VDS polling bridge, что и пользовательский: добавляе
    MONITOR_STALE_SYNC_MINUTES=180
    ```
 
-   Это шаблон: замените значения. `MONITOR_ADMIN_IDS` — Telegram **user ID**, не username,
-   не ID пользователя в БД и не роль «Управление пользователями». Несколько ID разделяются
-   запятыми. Бот отвечает только этим людям и только в личном чате.
-   При пустом `MONITOR_NODE_IDS` используются все VM, когда-либо приславшие heartbeat.
-   Для явного списка укажите через запятую уникальные `LOCKED_BY_PREFIX` ваших VM.
-   Такой список нужен только для обнаружения VM, ни разу не вышедшей на связь, или чтобы
-   исключить выведенную из эксплуатации VM без удаления записей из БД.
+   Токен должен отличаться от `TELEGRAM_BOT_TOKEN`. Общий секрет старого polling-моста,
+   `MONITOR_BRIDGE_NAME`, `MONITOR_BRIDGE_SECRET` и `MONITOR_WEBHOOK_SECRET` больше не
+   используются. Входящий запрос проверяется по `X-Bot-Hub-Secret`, вычисленному из
+   собственного токена бота. Чужие пользователи и групповые чаты по-прежнему игнорируются.
+   После изменения `.env` повторите `config:cache`.
 
-   **Отдельного секрета монитора нет.** Проверка такая же, как у обычного бота:
-   если существующий `TELEGRAM_BRIDGE_SECRET` задан, сверяется `X-TG-Bridge-Secret`;
-   если не задан — этот заголовок не требуется. Настройки рабочего моста не меняйте.
-   Переменные `MONITOR_BRIDGE_SECRET` и `MONITOR_WEBHOOK_SECRET` больше не используются,
-   их можно удалить; оставшиеся значения не влияют на обработчик.
-
-   При переходе с предыдущей версии достаточно загрузить обновлённый бэкенд и выполнить
-   `php artisan config:cache`. Новая миграция не нужна. При уже работающем polling повторная
-   настройка Telegram также не нужна. Если мост получил 429 из-за предыдущих повторных
-   отказов, дайте минутному лимиту истечь; отключать лимит или общий сервис семи ботов не нужно.
-
-3. Примените настройки и подготовьте **нового** бота к работе через мост:
+3. На VPS с установленным bot-hub зарегистрируйте отдельного технического бота:
 
    ```bash
-   /opt/php/8.4/bin/php artisan config:cache
+   bot-hubctl add oscalendar-monitor --callback https://oscalendar.ru/api/telegram/monitor/webhook
+   ```
+
+   В скрытом запросе укажите `MONITOR_BOT_TOKEN`. Команда проверит защищённый
+   `GET /api/telegram/monitor/webhook?hub_check=1` и сама зарегистрирует Telegram webhook.
+   После регистрации на хостинге выполните:
+
+   ```bash
    /opt/php/8.4/bin/php artisan monitor:setup
    ```
 
-   Команда удаляет прямой Telegram webhook **только у технического бота**, не удаляя
-   накопленные сообщения, и задаёт список команд. Polling `getUpdates` не работает, пока
-   зарегистрирован webhook ([Telegram Bot API](https://core.telegram.org/bots/api#getupdates)).
-   Не используйте токен пользовательского бота. Старая команда `monitor:webhook` оставлена
-   как псевдоним `monitor:setup`: она больше не регистрирует прямой webhook.
-
-   На VDS добавьте в существующий массив `bots` вторую запись (первую не заменяйте):
-
-   ```json
-   {
-     "name": "oscalendar_monitor_bot",
-     "token": "ТОКЕН_НОВОГО_БОТА",
-     "target": "https://oscalendar.ru/api/telegram/monitor/webhook"
-   }
-   ```
-
-   Имя должно совпадать с `MONITOR_BRIDGE_NAME`, токен — с `MONITOR_BOT_TOKEN` на хостинге.
-   Для запросов этой записи мост должен передавать:
-
-   ```http
-   X-TG-Bridge: vds-poller
-   X-TG-Bot: oscalendar_monitor_bot
-   ```
-
-   Только если у обычного бота настроен `TELEGRAM_BRIDGE_SECRET`, передаётся и проверяется
-   тот же `X-TG-Bridge-Secret`. Новые заголовки для монитора добавлять не требуется.
-   Совместимость без секрета не является криптографической проверкой отправителя:
-   заголовки и Telegram ID можно подделать. Общий секрет, если он настроен для существующего
-   моста, остаётся обязательным и у монитора. Секреты и текст сообщений в журнал отказов не пишутся.
-
-   После изменения конфигурации перезапустите существующий сервис моста. Администраторы
-   должны открыть нового бота и нажать Start (`/start`), иначе Telegram не позволит ему
-   отправлять уведомления. Адрес `/api/telegram/monitor/webhook` остался прежним, но теперь
-   это **приёмник сообщений моста**, а не прямой webhook Telegram. Причина отказа возвращается
-   коротким JSON и записывается в Laravel как `Monitor bridge request rejected`:
-   `invalid_bridge_header`, `invalid_bot_name` или `invalid_bridge_secret`.
-   Команды чужих пользователей и из групп игнорируются.
+   Команда задаёт меню через bot-hub. Она больше не удаляет и не регистрирует webhook;
+   `monitor:webhook` оставлен как псевдоним с тем же поведением. Администраторы должны
+   открыть технического бота и нажать Start. При переходе со старого polling-моста уберите
+   из него только запись этого бота: одновременно опрашивать его через `getUpdates` нельзя.
+   Остальные боты моста не затрагиваются. Общая инструкция перехода — в разделе Telegram bot.
 
 4. Обновите код на **каждой** VM парсера. В её `.env`:
 
@@ -786,51 +747,86 @@ POST /api/telegram/webhook
 
 ## Telegram bot
 
-The VPS bridge delivers incoming Telegram updates to Laravel. Laravel sends replies to Telegram API directly, using the bot token from `.env`.
+Incoming updates and all outgoing Bot API requests use **bot-hub at
+`https://tg.volodimir-k.su`**. Existing menus, registration, portal password changes,
+calendar links and notification queues are retained. No direct Telegram fallback is used.
+The PHP example bot is not installed over the Laravel business logic.
 
-Configure Laravel:
+Configure the hosting environment (keep existing tokens):
 
-```env
-TELEGRAM_BRIDGE_NAME=oscalendar_bot
-TELEGRAM_BRIDGE_SECRET=
-TELEGRAM_BOT_TOKEN=123456:telegram-token
+```dotenv
 APP_URL=https://oscalendar.ru
+TELEGRAM_BOT_TOKEN=your_existing_bot_token
+TELEGRAM_API_BASE_URL=https://tg.volodimir-k.su
+# Optional separate technical bot:
+MONITOR_BOT_TOKEN=your_monitor_bot_token
+MONITOR_ADMIN_IDS=your_numeric_telegram_id
 ```
 
-Bridge config example on the VPS:
+`TELEGRAM_BRIDGE_NAME`, `TELEGRAM_BRIDGE_SECRET` and `MONITOR_BRIDGE_NAME` are obsolete.
+Old `X-TG-*` headers cannot authorize a callback. Each bot requires:
 
-```json
-{
-  "telegram_poll_timeout": 50,
-  "telegram_http_timeout": 60,
-  "target_http_timeout": 30,
-  "bots": [
-    {
-      "name": "oscalendar_bot",
-      "token": "123456:telegram-token-stored-only-on-vps",
-      "target": "https://oscalendar.ru/api/telegram/webhook"
-    }
-  ]
-}
+```php
+hash_hmac('sha256', 'bot-hub-forward-v1', $botToken)
 ```
 
-The bridge sends Telegram updates to Laravel with:
+as the `X-Bot-Hub-Secret` header. The two callbacks share the same authentication and
+receipt middleware, using their own tokens. Both support POST updates and a protected
+`GET ?hub_check=1`. The health check calls only `getMe` through bot-hub and returns
+`bot_hub: ready`, the numeric bot ID and `api_base`; it sends no chat messages.
 
-```http
-POST /api/telegram/webhook
-X-TG-Bridge: vds-poller
-X-TG-Bot: oscalendar_bot
+Deploy the backend and run on the **hosting server**:
+
+```bash
+/opt/php/8.4/bin/php artisan migrate --force
+/opt/php/8.4/bin/php artisan route:clear
+/opt/php/8.4/bin/php artisan config:cache
 ```
 
-Laravel processes the update, sends the reply through Telegram API, and returns `{"ok": true}` to the bridge.
+On the **bot-hub VPS**, with bot-hubctl 2026.11.10.3 installed, remove only these bots
+from the old poller's list before registering them (leave other bots/services running):
 
-Bot diagnostics are written to the default Laravel log:
-
-```text
-storage/logs/laravel.log
+```bash
+bot-hubctl add oscalendar --callback https://oscalendar.ru/api/telegram/webhook
+# If MONITOR_BOT_TOKEN is configured, register this second token separately:
+bot-hubctl add oscalendar-monitor --callback https://oscalendar.ru/api/telegram/monitor/webhook
 ```
 
-The log includes update ids, chat ids, Telegram user ids, commands, bridge header rejections, exceptions, and outgoing Telegram API calls. Message text is not logged because onboarding may contain portal credentials.
+Enter the corresponding token at each hidden prompt. bot-hubctl verifies the callback
+and registers the Telegram webhook; do not call `setWebhook` manually. Then send `/start`
+to the ordinary bot and, if configured, run `monitor:setup` on the hosting server and send
+`/start` to the technical bot. Registration/verification itself sends no chat messages.
+
+Diagnostics on the VPS:
+
+```bash
+bot-hubctl verify oscalendar
+bot-hubctl verify oscalendar-monitor
+```
+
+No frontend or parser deployment is required for this transport change.
+
+Processed update IDs are stored in `telegram_webhook_updates`, separately for each bot,
+without message bodies, passwords or tokens. The bot identity is derived from the token's
+numeric prefix, so rotating a token for the same bot retains deduplication. A unique key
+and row lock serialize concurrent duplicate deliveries. Handler database changes and the
+processed receipt commit in one transaction; processing or outgoing API failure rolls
+them back and returns a safe HTTP 503, allowing bot-hub to retry. Successful duplicates
+return HTTP 200 without applying the action again. Do not delete these receipts during a
+routine cleanup: queued duplicates must remain recognizable. No automatic database
+transaction retries or immediate outgoing HTTP retries are performed.
+
+Outgoing sends are synchronous and cannot be rolled back with the database. If a reply
+was already sent before a later operation failed, or a network interruption hides the send
+result, a reply can appear twice on retry. This is not a guarantee of exactly-once chat
+delivery. Background notification queues retain their own retry policies and persist
+successful recipients before attempting later ones; a failed Telegram authentication notice
+still allows its existing push fallback. bot-hubctl owns `setWebhook`, `deleteWebhook`,
+`getUpdates`, `logOut` and `close`; application clients reject these management methods.
+
+Bot diagnostics use the default Laravel log, `storage/logs/laravel.log`. Logs include update
+IDs, chat/user IDs, safe method/status and exception class metadata. API URLs containing
+tokens, raw API response bodies, incoming message text and HMAC values are not logged.
 
 Create the first Telegram bot admin from console:
 

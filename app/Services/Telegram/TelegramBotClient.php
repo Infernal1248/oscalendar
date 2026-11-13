@@ -2,13 +2,12 @@
 
 namespace App\Services\Telegram;
 
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class TelegramBotClient
 {
-    private $baseUrl;
+    private string $token;
 
     public function __construct()
     {
@@ -18,7 +17,7 @@ class TelegramBotClient
             throw new RuntimeException('TELEGRAM_BOT_TOKEN is not configured.');
         }
 
-        $this->baseUrl = 'https://api.telegram.org/bot'.$token;
+        $this->token = $token;
     }
 
     public function sendMessage(int $chatId, string $text, array $options = []): array
@@ -65,53 +64,10 @@ class TelegramBotClient
         $this->request('answerCallbackQuery', $payload);
     }
 
-    private function request(string $method, array $payload): ?array
+    private function request(string $method, array $payload): array
     {
-        $started = microtime(true);
-        try {
-            $response = Http::asJson()
-                ->connectTimeout(5)->timeout(15)
-                ->post($this->baseUrl.'/'.$method, $payload);
-        } catch (\Throwable $exception) {
-            $cause = $exception;
-            while ($cause->getPrevious()) $cause = $cause->getPrevious();
-            $context = method_exists($cause, 'getHandlerContext') ? $cause->getHandlerContext() : [];
-            Log::warning('Telegram API connection failed', [
-                'duration_ms' => (int) ((microtime(true) - $started) * 1000),
-                'curl_errno' => $context['errno'] ?? null,
-                'method' => $method,
-                'chat_id' => $payload['chat_id'] ?? null,
-                'exception' => get_class($exception),
-            ]);
-
-            return null;
-        }
-
-        $data = $response->json() ?: [];
-
-        // Telegram reports an already-applied edit as HTTP 400. The desired state
-        // has been reached; do not log an error or retry it.
-        if ($method === 'editMessageReplyMarkup' && $response->status() === 400
-            && str_contains(strtolower($data['description'] ?? ''), 'message is not modified')) {
-            return [];
-        }
-
-        if (! $response->successful() || ($data['ok'] ?? false) !== true) {
-            Log::error('Telegram API request failed', [
-                'method' => $method,
-                'chat_id' => $payload['chat_id'] ?? null,
-                'status' => $response->status(),
-                'response' => $response->body(),
-            ]);
-
-            return null;
-        }
-
-        Log::info('Telegram API request sent', [
-            'method' => $method,
-            'chat_id' => $payload['chat_id'] ?? null,
-        ]);
-
+        $data = app(BotHubApi::class)->request($this->token, $method, $payload);
+        Log::info('Telegram API request sent', ['method' => $method, 'chat_id' => $payload['chat_id'] ?? null]);
         return is_array($data['result'] ?? null) ? $data['result'] : [];
     }
 

@@ -30,13 +30,9 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
-    'telegram_bridge' => [
-        'name' => env('TELEGRAM_BRIDGE_NAME'),
-        'secret' => env('TELEGRAM_BRIDGE_SECRET'),
-    ],
-
     'telegram_bot' => [
         'token' => env('TELEGRAM_BOT_TOKEN'),
+        'api_base' => env('TELEGRAM_API_BASE_URL', 'https://tg.volodimir-k.su'),
     ],
 
 ];
