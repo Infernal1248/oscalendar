@@ -7,6 +7,8 @@ use RuntimeException;
 
 class BotHubApi
 {
+    private const EXPIRED_CALLBACK = 'bad request: query is too old and response timeout expired or query id is invalid';
+
     public function baseUrl(): string
     {
         $base = rtrim((string) config('services.telegram_bot.api_base'), '/');
@@ -37,6 +39,11 @@ class BotHubApi
         }
         if ($method === 'editMessageReplyMarkup' && $response->status() === 400 && is_array($data)
             && str_contains(strtolower((string) ($data['description'] ?? '')), 'message is not modified')) {
+            return ['ok' => true, 'result' => []];
+        }
+        if ($method === 'answerCallbackQuery' && $response->status() === 400
+            && is_string($data['description'] ?? null) && strtolower(trim($data['description'])) === self::EXPIRED_CALLBACK) {
+            // Retrying cannot recover an expired callback answer. Let the update finish normally.
             return ['ok' => true, 'result' => []];
         }
         if (! $response->successful() || ! is_array($data) || ($data['ok'] ?? false) !== true) {

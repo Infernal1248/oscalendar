@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\{ParserTask, PortalCredential, TelegramAccount, User};
+use App\Models\{ParserTask, PortalCredential, RosterChangeEvent, TelegramAccount, User};
 use App\Services\Telegram\{BotHubApi, TelegramBotClient};
 use Illuminate\Support\Facades\{Artisan, Cache, Crypt, DB, Http, Log};
 use Tests\TestCase;
@@ -11,6 +11,7 @@ class BotHubTest extends TestCase
 {
     private const TOKEN = '12345:fixture-user-token';
     private const MONITOR_TOKEN = '67890:fixture-monitor-token';
+    private const EXPIRED_CALLBACK = 'Bad Request: query is too old and response timeout expired or query ID is invalid';
 
     protected function setUp(): void
     {
@@ -87,6 +88,59 @@ class BotHubTest extends TestCase
         $this->postJson('/api/telegram/webhook', $this->update(), $this->headers())->assertOk();
         $this->assertDatabaseCount('users', 1);
         Http::assertSentCount(2);
+    }
+
+    public function test_expired_callback_for_a_past_roster_period_stops_webhook_retries(): void
+    {
+        $this->travelTo(now()->utc()->startOfMonth()->addDay(), function () {
+            $update = $this->rosterAcknowledgement(now()->utc()->subMonth()->format('Y-m'));
+            $event = RosterChangeEvent::sole();
+            Http::fake(['tg.volodimir-k.su/*' => Http::sequence()
+                ->push(['ok' => false, 'description' => 'Bad Request: another error'], 400)
+                ->push(['ok' => false, 'description' => self::EXPIRED_CALLBACK], 400)]);
+
+            $this->postJson('/api/telegram/webhook', $update, $this->headers())->assertStatus(503);
+            $this->assertDatabaseCount('telegram_webhook_updates', 0);
+            $this->assertSame('pending', $event->fresh()->status);
+
+            $this->postJson('/api/telegram/webhook', $update, $this->headers())->assertOk();
+            $this->assertSame('superseded', $event->fresh()->status);
+            $this->assertDatabaseCount('parser_tasks', 0);
+            $this->assertNotNull(DB::table('telegram_webhook_updates')->sole()->processed_at);
+
+            $this->postJson('/api/telegram/webhook', $update, $this->headers())->assertOk();
+            Http::assertSentCount(2);
+            Http::assertSent(fn ($request) => str_ends_with($request->url(), '/answerCallbackQuery')
+                && str_contains($request['text'], $event->period) && str_contains($request['text'], 'Хронология изменений'));
+        });
+    }
+
+    public function test_expired_callback_answer_does_not_lose_a_current_roster_acknowledgement(): void
+    {
+        $this->travelTo(now()->utc()->startOfMonth()->addDay(), function () {
+            $update = $this->rosterAcknowledgement(now()->utc()->format('Y-m'));
+            Http::fake(['tg.volodimir-k.su/*/answerCallbackQuery' => Http::response(['ok' => false, 'description' => self::EXPIRED_CALLBACK], 400),
+                'tg.volodimir-k.su/*/sendMessage' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
+
+            $this->postJson('/api/telegram/webhook', $update, $this->headers())->assertOk();
+            $this->postJson('/api/telegram/webhook', $update, $this->headers())->assertOk();
+            $event = RosterChangeEvent::sole();
+            $this->assertSame('acknowledgement_requested', $event->status);
+            $this->assertSame($event->id, ParserTask::sole()->payload['roster_change_event_id']);
+            Http::assertSentCount(2);
+        });
+    }
+
+    private function rosterAcknowledgement(string $period): array
+    {
+        $user = User::create(['status' => 'active']);
+        $this->grantPermissions($user, ['history.view']);
+        TelegramAccount::create(['user_id' => $user->id, 'telegram_id' => 55]);
+        $event = RosterChangeEvent::create(['user_id' => $user->id, 'source' => 'rossiya_edu',
+            'period' => $period, 'status' => 'pending', 'change_hash' => str_repeat('a', 64), 'changes' => []]);
+
+        return ['update_id' => 17, 'callback_query' => ['id' => 'callback-id', 'from' => ['id' => 55],
+            'message' => ['chat' => ['id' => 55, 'type' => 'private']], 'data' => 'roster.ack:'.$event->id]];
     }
 
     public function test_password_update_preserves_spaces_rolls_back_on_failure_and_is_applied_once(): void

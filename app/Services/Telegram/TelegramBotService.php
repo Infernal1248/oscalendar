@@ -372,7 +372,10 @@ class TelegramBotService
                 ->where('user_id', $account->user_id)
                 ->first();
             if (! $event || $event->status === 'superseded') {
-                $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), 'Появились более новые изменения.');
+                $text = $event && $event->period < now()->utc()->format('Y-m')
+                    ? "Период {$event->period} закрыт. Актуальные изменения — в разделе «Хронология изменений»."
+                    : 'Этот запрос устарел. Откройте «Хронологию изменений» в личном кабинете.';
+                $this->client->answerCallbackQuery((string) ($callback['id'] ?? ''), $text);
                 return;
             }
             if ($event->status === 'acknowledged') {
