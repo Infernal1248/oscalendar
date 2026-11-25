@@ -128,7 +128,7 @@ class MeteoReports
     {
         $base = rtrim((string) config('services.meteo.base_url'), '/');
         $parts = parse_url($base);
-        if (($parts['scheme'] ?? null) !== 'https' || empty($parts['host']) || isset($parts['user'])
+        if (! in_array($parts['scheme'] ?? null, ['http', 'https'], true) || empty($parts['host']) || isset($parts['user'])
             || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
             return null;
         }

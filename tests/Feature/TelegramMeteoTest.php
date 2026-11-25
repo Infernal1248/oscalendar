@@ -120,4 +120,24 @@ class TelegramMeteoTest extends TestCase
             app(MeteoReports::class)->fetch(['UUEE']));
         $this->assertCount(2, Http::recorded(fn ($request) => $request->url() === self::SOURCE.'/'));
     }
+
+    public function test_http_endpoint_can_authenticate_and_return_a_report(): void
+    {
+        config(['services.meteo.base_url' => 'http://meteoinfo.gamc.ru']);
+        Http::fake([
+            'http://meteoinfo.gamc.ru/' => Http::response('', 302, [
+                'Location' => '/',
+                'Set-Cookie' => 'session=authorized; Path=/; HttpOnly',
+            ]),
+            'http://meteoinfo.gamc.ru/app/lib/bamd.php*' => Http::response('<pre>METAR UUEE 171200Z 00000KT</pre>'),
+        ]);
+
+        $this->assertSame(['UUEE' => 'METAR UUEE 171200Z 00000KT'], app(MeteoReports::class)->fetch(['UUEE']));
+        Http::assertSent(fn (Request $request) => $request->method() === 'POST'
+            && $request->url() === 'http://meteoinfo.gamc.ru/' && $request['login'] === 'fixture' && $request['pass'] === 'pass & word');
+        Http::assertSent(fn (Request $request) => $request->method() === 'GET'
+            && str_starts_with($request->url(), 'http://meteoinfo.gamc.ru/app/lib/bamd.php?')
+            && $request->hasHeader('Cookie', 'session=authorized'));
+        Http::assertSentCount(2);
+    }
 }
