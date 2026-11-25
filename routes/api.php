@@ -4,6 +4,7 @@ use App\Http\Controllers\CalendarFeedController;
 use App\Http\Controllers\AccountController;
 use App\Http\Controllers\AdminUserController;
 use App\Http\Controllers\AirFaseController;
+use App\Http\Controllers\MeteoController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\Internal\ParserJobController;
 use App\Http\Controllers\Internal\PartialSyncResultController;
@@ -25,6 +26,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('/auth/login', [AccountController::class, 'login'])->middleware('throttle:10,1');
 Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/meteo', MeteoController::class)->middleware('throttle:10,1,meteo:');
     Route::get('/pilot-checks', [\App\Http\Controllers\PilotCheckController::class, 'index']);
     Route::post('/pilot-checks/refresh', [\App\Http\Controllers\PilotCheckController::class, 'refresh'])->middleware('throttle:10,1');
     Route::post('/pilot-checks/confirm-certificate', [\App\Http\Controllers\PilotCheckController::class, 'confirmCertificate'])->middleware('throttle:10,1');

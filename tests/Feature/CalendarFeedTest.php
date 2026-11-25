@@ -96,6 +96,15 @@ class CalendarFeedTest extends TestCase
             'phones' => ['+79175733818'],
         ]);
 
+        RosterItem::query()->create([
+            'user_id' => $user->id,
+            'source_external_id' => '1660763',
+            'kind' => 'flight_ring',
+            'flight_numbers_raw' => 'ФВ6477/ФВ6478',
+            'route_raw' => 'ШЕРЕМЕТ-B / МУРМАНСК / Москва (Шереметьево)',
+            'starts_at' => '2026-08-20 09:00:00',
+        ]);
+
         $cancelledItem = RosterItem::query()->create([
             'user_id' => $user->id,
             'source_external_id' => '1660764',
@@ -125,7 +134,11 @@ class CalendarFeedTest extends TestCase
         $unfolded = str_replace("\r\n ", '', $content);
 
         $this->assertStringContainsString("SUMMARY:ОФИС\r\n", $unfolded);
-        $this->assertStringContainsString("SUMMARY:ФВ6363 ШЕРЕМЕТ - ТЮМЕНЬ\r\n", $unfolded);
+        $this->assertStringContainsString("LOCATION:Шереметьево\r\n", $unfolded);
+        $this->assertStringContainsString("SUMMARY:ФВ6363 ШРМ - РЩН\r\n", $unfolded);
+        $this->assertStringContainsString("LOCATION:МОСКВА (ШЕРЕМЕТЬЕВО) - ТЮМЕНЬ (РОЩИНО)\r\n", $unfolded);
+        $this->assertStringContainsString("SUMMARY:ФВ6477/ФВ6478 ШРМ-B / МУН / ШРМ\r\n", $unfolded);
+        $this->assertStringContainsString("LOCATION:МОСКВА (ШЕРЕМЕТЬЕВО)-B / МУРМАНСК / МОСКВА (ШЕРЕМЕТЬЕВО)\r\n", $unfolded);
         $this->assertStringContainsString('DESCRIPTION:Борт: 89100\\n\\nЭкипаж:\\n1) КВС Фраиндт Роман Александрович\\n+79690290525\\n+79999667434\\n2) ВП Елисеев Илья Викторович\\n+79175733818', $unfolded);
         $this->assertStringNotContainsString('Рейс ФВ6363', $unfolded);
         $this->assertStringNotContainsString('Тип ВС:', $unfolded);

@@ -35,4 +35,10 @@ return [
         'api_base' => env('TELEGRAM_API_BASE_URL', 'https://tg.volodimir-k.su'),
     ],
 
+    'meteo' => [
+        'base_url' => env('METEO_BASE_URL', 'https://meteoinfo.gamc.ru'),
+        'login' => env('METEO_LOGIN'),
+        'password' => env('METEO_PASSWORD'),
+    ],
+
 ];

@@ -5,12 +5,17 @@ namespace App\Http\Controllers;
 use App\Models\CalendarFeed;
 use App\Models\FlightSegment;
 use App\Models\RosterItem;
+use App\Services\AirportDirectory;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Response;
 
 class CalendarFeedController extends Controller
 {
+    public function __construct(private AirportDirectory $airports)
+    {
+    }
+
     public function show(string $token): Response
     {
         $feed = CalendarFeed::query()
@@ -106,7 +111,7 @@ class CalendarFeedController extends Controller
     {
         $summary = trim(implode(' ', array_filter([
             $segment->flight_number,
-            $segment->route_raw,
+            $this->airports->formatRoute($segment->route_raw, compact: true),
         ])));
 
         $description = array_filter([
@@ -139,7 +144,7 @@ class CalendarFeedController extends Controller
             'uid' => 'flight-segment-'.$segment->id.'@oscalendar',
             'summary' => $summary ?: 'Рейс',
             'description' => implode("\n", $description),
-            'location' => $segment->route_raw,
+            'location' => $this->airports->formatRoute($segment->route_raw, compact: false),
             'starts_at' => $segment->starts_at,
             'ends_at' => $segment->ends_at ?: Carbon::parse($segment->starts_at)->addHours(2),
             'url' => $segment->open_doc_url ?: $segment->download_doc_url,
@@ -149,8 +154,10 @@ class CalendarFeedController extends Controller
 
     private function rosterItemEvent(RosterItem $item): array
     {
-        $summary = $item->kind === 'flight_ring'
-            ? trim(implode(' ', array_filter([$item->flight_numbers_raw, $item->route_raw])))
+        $isFlight = $item->kind === 'flight_ring';
+        $route = $isFlight ? $this->airports->formatRoute($item->route_raw, compact: false) : $item->route_raw;
+        $summary = $isFlight
+            ? trim(implode(' ', array_filter([$item->flight_numbers_raw, $this->airports->formatRoute($item->route_raw, compact: true)])))
             : trim((string) $item->flight_numbers_raw);
 
         return $this->event([
@@ -159,11 +166,11 @@ class CalendarFeedController extends Controller
                 && ($item->source_payload['all_day'] ?? false) === true,
             'summary' => $summary ?: ($item->title ?: $item->kind ?: 'План'),
             'description' => implode("\n", array_filter([
-                $item->route_raw ? 'Маршрут: '.$item->route_raw : null,
+                $route ? 'Маршрут: '.$route : null,
                 $item->aircraft_type_raw ? 'Тип ВС: '.$item->aircraft_type_raw : null,
                 $item->boards_raw ? 'Борт: '.$item->boards_raw : null,
             ])),
-            'location' => $item->route_raw,
+            'location' => $route,
             'starts_at' => $item->starts_at,
             'ends_at' => $item->ends_at ?: Carbon::parse($item->starts_at)->addHours(2),
             'updated_at' => $item->updated_at,

@@ -11,6 +11,8 @@ use App\Models\RosterItem;
 use App\Models\RosterChangeEvent;
 use App\Models\TelegramAccount;
 use App\Models\User;
+use App\Services\AirportDirectory;
+use App\Services\MeteoReports;
 use App\Services\ParserTaskScheduler;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -23,13 +25,16 @@ class TelegramBotService
     private const STATE_PORTAL_LOGIN = 'onboarding.portal_login';
     private const STATE_PORTAL_PASSWORD = 'onboarding.portal_password';
     private const STATE_CHANGE_PASSWORD = 'portal.change_password';
+    private const STATE_METEO = 'meteo.airports';
 
     private $client;
 
     public function __construct(
         TelegramBotClient $client,
         private ParserTaskScheduler $taskScheduler,
-        private RosterChangeNotifier $rosterChangeNotifier
+        private RosterChangeNotifier $rosterChangeNotifier,
+        private AirportDirectory $airports,
+        private MeteoReports $meteo,
     )
     {
         $this->client = $client;
@@ -126,6 +131,7 @@ class TelegramBotService
 
     private function handleStart(int $chatId, TelegramAccount $account): void
     {
+        $account->conversations()->where('state', self::STATE_METEO)->whereNull('expires_at')->update(['expires_at' => now()]);
         if (! $account->user->display_name) {
             Log::info('Telegram onboarding asks display name', [
                 'telegram_id' => $account->telegram_id,
@@ -169,6 +175,10 @@ class TelegramBotService
 
         if (! $conversation) {
             return false;
+        }
+
+        if ($conversation->state === self::STATE_METEO) {
+            return $this->handleMeteoInput($chatId, $account, $conversation, $text);
         }
 
         Log::info('Telegram bot handling conversation state', [
@@ -276,6 +286,13 @@ class TelegramBotService
             return;
         }
         switch ($text) {
+            case 'Метео':
+            case 'Метео по полётному заданию':
+            case 'Ввести коды аэропортов':
+            case 'Назад из метео':
+                $this->handleMeteoMenu($chatId, $account, $text);
+                return;
+
             case 'Помощь':
             case 'Личный кабинет':
             case 'Подписка':
@@ -311,6 +328,137 @@ class TelegramBotService
                 $this->client->sendMessage($chatId, 'Меню открыто.', [
                     'reply_markup' => $this->mainKeyboard($account),
                 ]);
+        }
+    }
+
+    private function handleMeteoMenu(int $chatId, TelegramAccount $account, string $text): void
+    {
+        if ($chatId !== $account->telegram_id) {
+            return;
+        }
+        if ($text === 'Назад из метео' || ! $this->meteo->configured()) {
+            $message = $text === 'Назад из метео' ? 'Меню открыто.' : 'Метеосервис пока недоступен.';
+            $this->client->sendMessage($chatId, $message, ['reply_markup' => $this->mainKeyboard($account)]);
+            return;
+        }
+        if ($text === 'Метео по полётному заданию') {
+            $this->sendAssignmentMeteo($chatId, $account);
+            return;
+        }
+
+        $keyboard = [];
+        if ($account->user->hasPermission('workplan.view')) {
+            $keyboard[] = [['text' => 'Метео по полётному заданию']];
+        }
+        $keyboard[] = [['text' => 'Ввести коды аэропортов'], ['text' => 'Назад из метео']];
+        $message = 'Выберите ближайшее полётное задание или введите аэропорты вручную.';
+        if ($text === 'Ввести коды аэропортов') {
+            $this->setConversation($account, self::STATE_METEO);
+            $message = 'Введите до 10 кодов через пробел, например UUEE LED SVX. Названия аэропортов можно разделить запятыми.';
+        }
+        $this->client->sendMessage($chatId, $message, ['reply_markup' => ['keyboard' => $keyboard, 'resize_keyboard' => true]]);
+    }
+
+    private function handleMeteoInput(int $chatId, TelegramAccount $account, $conversation, string $text): bool
+    {
+        if ($chatId !== $account->telegram_id) {
+            return true;
+        }
+        $mainActions = array_column(array_merge(...$this->mainKeyboard($account)['keyboard']), 'text');
+        if (! $this->isActiveUser($account) || $conversation->created_at->lt(now()->subMinutes(10))
+            || str_starts_with($text, '/') || in_array($text, $mainActions, true)
+            || in_array($text, ['Назад из метео', 'Ввести коды аэропортов', 'Метео по полётному заданию'], true)) {
+            $this->closeConversation($conversation);
+            return false;
+        }
+        if ($text === '' || mb_strlen($text) > 400) {
+            $this->client->sendMessage($chatId, 'Введите до 10 кодов или названий аэропортов.');
+            return true;
+        }
+
+        $names = $this->airports->splitInput($text);
+        if ($names === [] || count($names) > AirportDirectory::MAX_QUERY_AIRPORTS) {
+            $this->client->sendMessage($chatId, 'Укажите от 1 до 10 аэропортов.');
+            return true;
+        }
+
+        $this->closeConversation($conversation);
+        $stops = array_map(fn ($name) => ['label' => $name, 'airport' => $this->airports->find($name)], $names);
+        $this->sendMeteo($chatId, $account, $stops);
+        return true;
+    }
+
+    private function sendAssignmentMeteo(int $chatId, TelegramAccount $account): void
+    {
+        if (! $account->user->hasPermission('workplan.view')) {
+            $this->client->sendMessage($chatId, 'Недостаточно прав для просмотра полётного задания.');
+            return;
+        }
+        $ownSegments = fn ($query) => $query->where('user_id', $account->user_id)->orderBy('starts_at');
+        $assignment = RosterItem::query()
+            ->where('user_id', $account->user_id)
+            ->where('kind', 'flight_ring')
+            ->where('is_actual', true)
+            ->where('is_removed_from_source', false)
+            ->where(fn ($query) => $query->where('starts_at', '>=', now())->orWhereHas('flightSegments',
+                fn ($segments) => $segments->where('user_id', $account->user_id)->where('starts_at', '>=', now())))
+            ->with(['flightSegments' => $ownSegments])
+            ->orderBy('starts_at')
+            ->first();
+
+        if ($assignment === null) {
+            $this->client->sendMessage($chatId, 'Ближайшее полётное задание пока не найдено.');
+            return;
+        }
+
+        $stops = $this->airports->routeStops($assignment->route_raw);
+        foreach ($assignment->flightSegments as $segment) {
+            $route = $segment->route_raw;
+            if (! $route) {
+                $route = implode(' / ', array_filter([$segment->departure_name, $segment->arrival_name]));
+            }
+            array_push($stops, ...$this->airports->routeStops($route));
+        }
+
+        $this->sendMeteo($chatId, $account, $stops);
+    }
+
+    private function sendMeteo(int $chatId, TelegramAccount $account, array $stops): void
+    {
+        $stations = [];
+        $unavailable = [];
+        foreach ($stops as ['label' => $label, 'airport' => $airport]) {
+            if ($icao = $airport['icao'] ?? null) {
+                $stations[$icao] = $airport['name'];
+            } else {
+                $unavailable[$label] = $airport === null ? 'аэропорт не найден' : 'нет латинского ICAO';
+            }
+        }
+
+        try {
+            $reports = $stations === [] ? [] : $this->meteo->fetch(array_keys($stations));
+        } catch (\RuntimeException $exception) {
+            $reports = [];
+        }
+        $receivedAt = now('UTC')->format('d.m.Y H:i');
+        $messages = [];
+        foreach ($stations as $icao => $name) {
+            $report = $reports[$icao] ?? null;
+            $messages[] = $icao.' · '.$name."\n".($report === null
+                ? 'Не удалось получить сводку.'
+                : "Получено {$receivedAt} UTC\n\n".$report);
+        }
+        foreach ($unavailable as $label => $reason) {
+            $messages[] = $label.' — '.$reason.'.';
+        }
+        if ($messages === []) {
+            $messages[] = 'В задании не удалось определить аэропорты.';
+        }
+        foreach ($messages as $index => $message) {
+            $this->client->sendMessage($chatId, $message, [
+                'parse_mode' => null,
+                'reply_markup' => $index === array_key_last($messages) ? $this->mainKeyboard($account) : null,
+            ]);
         }
     }
 
@@ -863,6 +1011,9 @@ class TelegramBotService
         }
         $keyboard[] = [['text' => 'Мой календарь'], ['text' => 'Сменить пароль']];
         $keyboard[] = [['text' => 'Личный кабинет'], ['text' => 'Подписка']];
+        if ($this->meteo->configured()) {
+            $keyboard[] = [['text' => 'Метео']];
+        }
         $keyboard[] = [['text' => 'Помощь']];
 
         if ($this->canApproveUsers($account)) {

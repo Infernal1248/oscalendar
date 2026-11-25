@@ -335,6 +335,7 @@ class AccountController extends Controller
             ]]),
             'navigation' => array_values(array_filter([
                 'profile',
+                $user->status === 'active' ? 'meteo' : null,
                 $user->hasFlightTimeAccess() ? 'flight-time' : null,
                 $user->hasReportsAccess() ? 'pilot-checks' : null,
                 in_array('dashboard.view', $permissions, true) ? 'dashboard' : null,
