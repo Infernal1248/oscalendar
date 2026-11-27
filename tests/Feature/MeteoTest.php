@@ -48,15 +48,91 @@ class MeteoTest extends TestCase
     {
         $this->mock(MeteoReports::class)->shouldNotReceive('fetch');
         $this->postJson('/api/meteo', ['airports' => 'SVO'])->assertUnauthorized();
-        $this->actingAs(User::create(['status' => 'blocked']), 'sanctum')
-            ->postJson('/api/meteo', ['airports' => 'SVO'])->assertForbidden();
+        $this->getJson('/api/meteo')->assertUnauthorized();
+        $this->postJson('/api/meteo/refresh')->assertUnauthorized();
+        $this->actingAs(User::create(['status' => 'blocked']), 'sanctum');
+        $this->postJson('/api/meteo', ['airports' => 'SVO'])->assertForbidden();
+        $this->getJson('/api/meteo')->assertForbidden();
+        $this->postJson('/api/meteo/refresh')->assertForbidden();
 
         $this->actingAs(User::create(['status' => 'active']), 'sanctum');
+        $this->getJson('/api/meteo')->assertOk()->assertExactJson(['request' => null]);
+        $this->postJson('/api/meteo/refresh')->assertNotFound();
         foreach (['', ', ,', str_repeat('SVO ', 11)] as $input) {
             $this->postJson('/api/meteo', ['airports' => $input])->assertUnprocessable()
                 ->assertJsonValidationErrors('airports');
         }
         $this->postJson('/api/meteo', ['airports' => 'UNKNOWN'])->assertOk()
             ->assertJsonPath('results.0.status', 'unknown_airport');
+    }
+
+    public function test_last_request_is_shared_by_the_account_and_replaced_only_when_reports_are_received(): void
+    {
+        $five = ['UUEE', 'ULLI', 'USSS', 'UNKL', 'UNNT'];
+        $six = [...$five, 'UUWW'];
+        $fiveAirports = 'SVO LED SVX KJA OVB';
+        $sixAirports = 'SVO LED SVX KJA OVB VKO';
+        $meteo = $this->mock(MeteoReports::class);
+        $meteo->shouldReceive('fetch')->twice()->with($five)->andReturn(
+            array_fill_keys($five, 'METAR 251200Z'),
+            array_fill_keys($five, 'METAR 251230Z'),
+        );
+        $meteo->shouldReceive('fetch')->twice()->with($six)->andReturn(
+            array_fill_keys($six, 'METAR 251300Z'),
+            array_fill_keys($six, null),
+        );
+        $meteo->shouldReceive('fetch')->once()->with(['UUEE'])->andThrow(new \RuntimeException);
+        $user = User::create(['status' => 'active']);
+        $tablet = $user->createToken('tablet')->plainTextToken;
+        $computer = $user->createToken('computer')->plainTextToken;
+
+        $initial = $this->withToken($tablet)->postJson('/api/meteo', ['airports' => $fiveAirports])
+            ->assertOk()->assertJsonCount(5, 'results')->assertJsonPath('saved', true);
+        $this->app['auth']->forgetGuards();
+        $restored = $this->withToken($computer)->getJson('/api/meteo')->assertOk()
+            ->assertJsonPath('request.airports', $fiveAirports)
+            ->assertJsonPath('request.received_at', $initial->json('received_at'))
+            ->assertJsonPath('request.results', $initial->json('results'));
+        $this->assertTrue($restored->headers->hasCacheControlDirective('no-store'));
+        $this->postJson('/api/meteo/refresh', ['airports' => 'VKO'])->assertOk()
+            ->assertJsonPath('airports', $fiveAirports)->assertJsonCount(5, 'results')
+            ->assertJsonPath('results.0.report', 'METAR 251230Z');
+
+        $replacement = $this->postJson('/api/meteo', ['airports' => $sixAirports])->assertOk()
+            ->assertJsonPath('airports', $sixAirports)->assertJsonCount(6, 'results');
+        $this->postJson('/api/meteo/refresh')->assertOk()->assertJsonPath('saved', false);
+        $this->postJson('/api/meteo', ['airports' => 'SVO'])->assertServiceUnavailable();
+        $this->getJson('/api/meteo')->assertOk()
+            ->assertJsonPath('request.airports', $sixAirports)->assertJsonCount(6, 'request.results')
+            ->assertJsonPath('request.received_at', $replacement->json('received_at'))
+            ->assertJsonPath('request.results', $replacement->json('results'));
+        $this->assertDatabaseCount('meteo_last_requests', 1);
+
+        $this->flushHeaders()->actingAs(User::create(['status' => 'active']), 'sanctum')
+            ->getJson('/api/meteo')->assertOk()->assertExactJson(['request' => null]);
+    }
+
+    public function test_an_in_flight_refresh_keeps_a_newer_list_submitted_on_another_device(): void
+    {
+        $user = User::create(['status' => 'active']);
+        $this->actingAs($user, 'sanctum');
+        $meteo = $this->mock(MeteoReports::class);
+        $meteo->shouldReceive('fetch')->once()->with(['UUEE'])->andReturn(['UUEE' => 'METAR 251200Z']);
+        $this->postJson('/api/meteo', ['airports' => 'SVO'])->assertOk();
+
+        $meteo->shouldReceive('fetch')->once()->with(['UUEE'])->andReturnUsing(function () use ($user) {
+            DB::table('meteo_last_requests')->where('user_id', $user->id)->update([
+                'airports' => 'LED',
+                'results' => json_encode([['icao' => 'ULLI', 'status' => 'ok', 'report' => 'METAR 251230Z']]),
+                'received_at' => now('UTC')->format('Y-m-d H:i:s.u'),
+            ]);
+
+            return ['UUEE' => 'METAR 251240Z'];
+        });
+
+        $this->postJson('/api/meteo/refresh')->assertOk()
+            ->assertJsonPath('airports', 'LED')->assertJsonPath('results.0.icao', 'ULLI');
+        $this->getJson('/api/meteo')->assertOk()->assertJsonPath('request.airports', 'LED')
+            ->assertJsonPath('request.results.0.report', 'METAR 251230Z');
     }
 }
